@@ -1,7 +1,7 @@
 # Generational IPD Simulation: Shadow Cabals, Organizational Memory & Institutional Drift
 
-**Author:** [Your Name or Handle]  
-**License:** MIT/AGPL-3.0 (your preference)
+**Author:** David A. Cook 
+**License:** AGPL-3.0
 
 ## What is this?
 
@@ -28,11 +28,11 @@ Most ABMs ignore long-term institutional memory, shadow influence, and generatio
 
 ## Example Plots
 
-*(Insert some key PNGs from your recent runs in /plots/ here)*
+*(Insert PNGs here)*
 
 ## License
 
-MIT/AGPL-3.0 — Your choice, but AGPL ensures forks stay open.
+AGPL-3.0
 
 ## Credit
 
