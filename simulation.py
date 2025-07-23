@@ -139,7 +139,6 @@ def founding_descendant_strategy(agent, partner, last_self=None, last_partner=No
 def accountant_strategy(agent, partner, last_self=None, last_partner=None):
     return factionalist_strategy(agent, partner, last_self, last_partner)
 
-strategy_functions["Accountant"] = accountant_strategy
 # --- Strategy map for selection ---
 strategy_functions = {
     "MoQ": moq_strategy,
