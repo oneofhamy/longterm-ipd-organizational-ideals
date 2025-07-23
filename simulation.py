@@ -624,48 +624,44 @@ for epoch in range(max_epochs):
     to_replace.sort(reverse=True)
 
     for idx in to_replace:
-        dead = agent_population[idx]
+        dead = agent_population[idx]  # Always define dead at start
+
         try:
             if dead["strategy"] == "PropagandaOffice":
                 # Handle specific logic for Propaganda Office if needed
                 pass
             network.remove_node(dead["id"])
         except Exception:
-            pass  # Node might have already been removed if it was a Propaganda Office
+            pass
 
         cluster_id = cluster_map.get(dead["id"], -1)
         is_propaganda_office = dead["strategy"] == "PropagandaOffice"
 
-        # Propaganda Office Respawn Logic
+        # --- Propaganda Office Respawn ---
         if is_propaganda_office and cluster_id != -1:
-            # Check if the cluster still exists and has enough members
             current_cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-            if len(current_cluster_agents) >= 5: # Check for >= 5 members
-                # Respawn Propaganda Office in the same cluster
+            if len(current_cluster_agents) >= 5:
                 new_agent = make_agent(agent_id_counter, strategy="PropagandaOffice", parent=dead, birth_epoch=epoch)
                 agent_id_counter += 1
-                # Replace the dead agent with the new one
                 agent_population[idx] = new_agent
                 network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
-                # Update the cluster_propaganda mapping to the new agent's ID
                 network.cluster_propaganda[cluster_id] = new_agent["id"]
                 print(f" Propaganda Office agent {dead['id']} respawned in Cluster {cluster_id} as agent {new_agent['id']} at epoch {epoch}.")
-                continue # Skip the default agent replacement logic
+                continue  # Don’t process the rest for this agent
 
-        # 1/3 chance that child rebels and does NOT inherit parent's strategy/trait
+        # --- Normal Agent Replacement ---
         if random.random() < 1/3:
-            # Assign random allowed strategy (excluding special strategies)
             allowed_strats = [s for s in strategy_functions.keys() if s not in ["FoundingDescendant", "PropagandaOffice"]]
             child_strategy = random.choice(allowed_strats)
             new_agent = make_agent(agent_id_counter, strategy=child_strategy, birth_epoch=epoch)
         else:
-            # Default: inherit parent trait/strategy
             new_agent = make_agent(agent_id_counter, parent=dead, birth_epoch=epoch)
+
         agent_id_counter += 1
         agent_population[idx] = new_agent
-        network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
-
-        # FoundingDescendant Spawning Logic (NEW/MODIFIED)
+        network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])     
+        
+        # FoundingDescendant Spawning Logic
         # Only spawn FoundingDescendant if not a Propaganda Office respawn and in a valid cluster
         if cluster_id != -1:
             # Get all cluster scores and rank them
