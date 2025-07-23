@@ -652,7 +652,7 @@ for epoch in range(max_epochs):
             # Assign random allowed strategy (excluding special strategies)
             allowed_strats = [s for s in strategy_functions.keys() if s not in ["FoundingDescendant", "PropagandaOffice"]]
             child_strategy = random.choice(allowed_strats)
-             new_agent = make_agent(agent_id_counter, strategy=child_strategy, birth_epoch=epoch)
+            new_agent = make_agent(agent_id_counter, strategy=child_strategy, birth_epoch=epoch)
         else:
             # Default: inherit parent trait/strategy
             new_agent = make_agent(agent_id_counter, parent=dead, birth_epoch=epoch)
