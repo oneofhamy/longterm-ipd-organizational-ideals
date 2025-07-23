@@ -16,7 +16,7 @@ payoff_matrix = {
     ("cooperate", "cooperate"): (3, 3),
     ("cooperate", "defect"): (0, 5),
     ("defect", "cooperate"): (5, 0),
-    ("defect", "defect"): (1, 1)
+    ("defect", "defect"): (0, 0)
 }
 
 # --- Strategy function definitions ---
@@ -115,9 +115,41 @@ def shadow_broker_strategy(agent, partner, last_self=None, last_partner=None):
         agent['broadcasted_karma'] = random.randint(-10, 10)
     return random_strategy(agent, partner, last_self, last_partner)
 
+# Helper function to check if an agent is a founder or descendant
+# Define the window for being considered a descendant globally for simplicity in this function
+# This could be made dynamic based on simulation parameters if needed.
+DESCENDANT_WINDOW_EPOCHS = 180 # Example: 1.5 times the initial average lifespan (120*1.5)
+
+def is_founder_or_descendant(agent_id, cluster_id, birth_epoch, network):
+    if cluster_id == -1 or cluster_id not in network.cluster_founding_ideals:
+        return False
+
+    for ideal_layer in network.cluster_founding_ideals[cluster_id]:
+        # Check if the agent is the founder of this layer
+        if ideal_layer.get('founder') == agent_id:
+            return True
+        # Check if the agent was born within the descendant window after this layer's founding epoch
+        if birth_epoch >= ideal_layer['epoch'] and birth_epoch <= ideal_layer['epoch'] + DESCENDANT_WINDOW_EPOCHS:
+            return True
+    return False
+
+
 def founding_descendant_strategy(agent, partner, last_self=None, last_partner=None):
-    # Cooperates if partner is cluster founder or descendant, else random
-    return random_strategy(agent, partner, last_self, last_partner)
+    # Check if the partner is in the same cluster
+    if agent.get("cluster", -1) != partner.get("cluster", -1) or agent.get("cluster", -1) == -1:
+        # If not in the same cluster, or not in a valid cluster, act randomly
+        return random_strategy(agent, partner, last_self, last_partner)
+
+    # Check if the partner is a founder or descendant within the agent's cluster
+    is_partner_founder_or_descendant = is_founder_or_descendant(
+        partner["id"],
+        agent["cluster"], # Check partner's status within agent's cluster context
+        partner["birth_epoch"],
+        network # Pass network to access founding_ideals
+    )
+
+    # Cooperate if the partner is a founder or descendant in the same cluster, otherwise defect
+    return "cooperate" if is_partner_founder_or_descendant else "defect"
 
 # --- Strategy map for selection ---
 strategy_functions = {
@@ -140,28 +172,29 @@ strategy_functions = {
     "Conformist": conformist_strategy,
     "ShadowBroker": shadow_broker_strategy,
     "FoundingDescendant": founding_descendant_strategy,
+    "PropagandaOffice": propaganda_office_strategy, # Added PropagandaOffice
 }
 
 # --- Agent initialization weights (updated) ---
-init_agents = 120
+init_agents = 200
 strategy_population = {
-    "MoQ": 4,
-    "GMoQ": 3,
+    "MoQ": 8,
+    "GMoQ": 4,
     "HGMoQ": 2,
-    "TFT": 10,
-    "GTFT": 5,
-    "HGTFT": 4,
-    "ALLC": 5,
-    "ALLD": 5,
-    "WSLS": 10,
-    "Ethnocentric": 10,
-    "Random": 5,
-    "GrimTrigger": 7,
+    "TFT": 15,
+    "GTFT": 10,
+    "HGTFT": 5,
+    "ALLC": 4,
+    "ALLD": 10,
+    "WSLS": 15,
+    "Ethnocentric": 24,
+    "Random": 10,
+    "GrimTrigger": 6,
     "ClusterUtilitarian": 7,
     "GlobalUtilitarian": 2,
-    "Factionalist": 15,
+    "Factionalist": 24,
     "Saboteur": 2,
-    "Conformist": 22,
+    "Conformist": 50,
     "ShadowBroker": 2,
     # PropagandaOffice and FoundingDescendant are only created by event, never initial
 }
@@ -179,10 +212,12 @@ random.shuffle(strategy_choices_weighted)
 def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
     if parent:
         tag = parent["tag"]
-        strategy = parent["strategy"]
+        # The strategy is determined by the spawning logic, not inherited directly
+        # strategy = parent["strategy"]
     if not tag:
         tag = random.choice(["Red", "Blue"])
     if not strategy:
+        # Initial agents use the weighted distribution
         strategy = random.choice(strategy_choices_weighted)
     lifespan = min(max(int(np.random.normal(90, 15)), 60), 120)
     return {
@@ -256,12 +291,18 @@ def belief_interact(a, b, rounds=5):
     for _ in range(rounds):
         if a["strategy"] == "WSLS":
             act_a = wsls_strategy(a, b, amem[0], amem[1], amem[2])
+        elif a["strategy"] == "FoundingDescendant":
+             act_a = founding_descendant_strategy(a, b, amem[0], amem[1]) # Use the specific strategy function
         else:
             act_a = strategy_functions[a["strategy"]](a, b, amem[0], amem[1])
+
         if b["strategy"] == "WSLS":
             act_b = wsls_strategy(b, a, bmem[0], bmem[1], bmem[2])
+        elif b["strategy"] == "FoundingDescendant":
+            act_b = founding_descendant_strategy(b, a, bmem[0], bmem[1]) # Use the specific strategy function
         else:
             act_b = strategy_functions[b["strategy"]](b, a, bmem[0], bmem[1])
+
 
         # Apology chance
         if act_a == "defect" and a["apology_available"] and random.random() < 0.2:
@@ -364,6 +405,38 @@ for epoch in range(max_epochs):
         a["cluster"] = cluster_map.get(a["id"], -1)
         a["influence"] = centrality.get(a["id"], 0) # Use .get() with a default value
 
+    # Calculate mean cluster score at the beginning of each epoch
+    cluster_scores = {}
+    for cluster_id in set(cluster_map.values()):
+        if cluster_id != -1:
+            cluster_members = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+            if cluster_members:
+                cluster_scores[cluster_id] = np.mean([a["score"] for a in cluster_members])
+
+
+    # --- Initialize Founding Ideals for All Clusters at Epoch 0 (NEW) ---
+    # This ensures all clusters present at epoch 0 have a founding ideal recorded.
+    # Subsequent ideal layers are added by the Martyr/Founder/Trauma event logic.
+    if epoch == 0:
+         for cluster_id in set(cluster_map.values()): # Iterate through unique cluster IDs
+            if cluster_id != -1: # Only process valid clusters
+                cluster_members_initial = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+                if len(cluster_members_initial) > 0: # Ensure the cluster is not empty
+                    # Find the agent with the highest initial score as a potential founder
+                    founder_candidate = max(cluster_members_initial, key=lambda x: x["score"])
+                    # Initialize the list for this cluster if it doesn't exist (shouldn't for epoch 0, but good practice)
+                    if cluster_id not in network.cluster_founding_ideals:
+                         network.cluster_founding_ideals[cluster_id] = []
+                    network.cluster_founding_ideals[cluster_id].append({
+                        'epoch': epoch,
+                        'ideal': np.mean([a["karma"] for a in cluster_members_initial]),  # Use mean karma as ideal
+                        'idolization': founder_candidate["score"],  # Use founder's initial score as idolization
+                        'decay': 0.0, # Decay needs to be implemented over time
+                        'layer': len(network.cluster_founding_ideals[cluster_id]),
+                        'founder': founder_candidate["id"],
+                    })
+
+
     np.random.shuffle(agent_population)
     for i in range(0, len(agent_population) - 1, 2):
         a = agent_population[i]
@@ -376,12 +449,57 @@ for epoch in range(max_epochs):
             a["perceived_karma"][k] *= 0.95
         a["apology_available"] = True
 
+    # --- Propaganda Office Cluster Influence (NEW) ---
+    # Iterate through agents and apply propaganda effects if in a cluster with an office
+    for agent in agent_population:
+        agent_cluster_id = agent.get("cluster", -1)
+        if agent_cluster_id != -1 and agent_cluster_id in network.cluster_propaganda:
+            # Get the office agent in this cluster
+            office_agent_id = network.cluster_propaganda[agent_cluster_id]
+            office_agent = next((a for a in agent_population if a["id"] == office_agent_id), None)
+
+            if office_agent: # Ensure the office agent is still alive
+                for other_agent in agent_population: # Iterate through all agents to update their perception of this agent
+                     if other_agent["id"] != agent["id"]: # Agents don't perceive themselves
+                        perception = other_agent["perceived_karma"].get(agent["id"], 0)
+
+                        # Propaganda effect 1: Mask Negative Karma (reduce impact of negative true karma on perception)
+                        # If true karma is negative, reduce the extent to which others perceive it as negative
+                        # Apply masking effect only if the agent being perceived is in the same cluster as the office
+                        if agent.get("cluster", -1) == agent_cluster_id:
+                            true_karma_impact = agent["karma"] * 0.5 # Base impact
+                            if agent["karma"] < 0:
+                                masking_factor = 0.8 # Reduce negative perception by 80%
+                                true_karma_impact = agent["karma"] * (1 - masking_factor) * 0.5
+                            else:
+                                # For positive or neutral karma, still use base impact
+                                true_karma_impact = agent["karma"] * 0.5
+                        else:
+                             # If the agent being perceived is NOT in the office's cluster, no masking
+                             true_karma_impact = agent["karma"] * 0.5
+
+
+                        # Propaganda effect 2: Inflate Perceived Karma (add a positive bias)
+                        inflation_bias = 0.1 # Add a small positive bias each epoch
+
+                        # Update perceived karma (simple additive model for demonstration)
+                        # Influence the perception of this agent by other_agent
+                        # The propaganda effect should primarily influence how other *within* the cluster perceive,
+                        # but could also influence those outside. Let's influence all for simplicity here.
+                        other_agent["perceived_karma"][agent["id"]] = perception + (true_karma_impact - perception) * 0.05 + inflation_bias # Small adjustment towards masked truth + bias
+
     # --- Mutation every 30 epochs
     if epoch % 30 == 0 and epoch > 0:
+        # Only apply mutation to agents that are NOT FoundingDescendant or PropagandaOffice
         for a in agent_population:
-            if a["score"] < np.median([x["score"] for x in agent_population]):
-                high_score_agent = max(agent_population, key=lambda x: x["score"])
-                a["strategy"] = random.choice([high_score_agent["strategy"], random.choice(strategy_choices_weighted)])
+            if a["strategy"] not in ["FoundingDescendant", "PropagandaOffice"]:
+                if a["score"] < np.median([x["score"] for x in agent_population]):
+                    high_score_agent = max(agent_population, key=lambda x: x["score"])
+                    # Mutation can result in any weighted strategy EXCEPT FoundingDescendant or PropagandaOffice
+                    available_mutation_strategies = [s for s in strategy_choices_weighted if s not in ["FoundingDescendant", "PropagandaOffice"]]
+                    if available_mutation_strategies:
+                        a["strategy"] = random.choice([high_score_agent["strategy"], random.choice(available_mutation_strategies)])
+
 
     # --- AGING & DEATH (agents die after lifespan, replaced by child agent)
     to_replace = []
@@ -389,74 +507,138 @@ for epoch in range(max_epochs):
         age = epoch - agent["birth_epoch"]
         if age >= agent["lifespan"]:
             to_replace.append(idx)
+
+    # Important: Sort to_replace in descending order to avoid index issues when removing/replacing
+    to_replace.sort(reverse=True)
+
     for idx in to_replace:
         dead = agent_population[idx]
         try:
             network.remove_node(dead["id"])
         except Exception:
-            pass
-        # Before replacement: check if cluster is eligible for Propaganda Office creation
-        cluster_id = cluster_map.get(dead["id"], -1)
-        # Only established clusters (>3 members), only one per cluster, only 1 per 4-6 clusters globally
-        cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-        num_clusters = len(set(cluster_map.values()))
-        max_offices = max(1, num_clusters // 4)
-        existing_offices = sum(1 for a in agent_population if a["strategy"] == "PropagandaOffice")
-        has_office = any(a["strategy"] == "PropagandaOffice" and a.get("cluster", -1) == cluster_id for a in agent_population)
-        if (
-            cluster_id != -1
-            and len(cluster_agents) >= 3
-            and not has_office
-            and existing_offices < max_offices
-            and cluster_id not in network.cluster_propaganda
-        ):
-            # Convert one agent in the cluster to PropagandaOffice
-            office_candidate = random.choice(cluster_agents)
-            office_candidate["strategy"] = "PropagandaOffice"
-            network.cluster_propaganda[cluster_id] = office_candidate["id"]
-            # Optionally, set a cluster-level field for propaganda activity
-            print(f"🗞️ Cluster {cluster_id}: Propaganda Office established (agent {office_candidate['id']}) at epoch {epoch}.")
+            pass # Node might have already been removed if it was a Propaganda Office that respawned
 
+        cluster_id = cluster_map.get(dead["id"], -1)
+        is_propaganda_office = dead["strategy"] == "PropagandaOffice"
+
+        # Propaganda Office Respawn Logic
+        if is_propaganda_office and cluster_id != -1:
+            # Check if the cluster still exists and has enough members
+            current_cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+            if len(current_cluster_agents) >= 5: # Check for >= 5 members
+                # Respawn Propaganda Office in the same cluster
+                new_agent = make_agent(agent_id_counter, strategy="PropagandaOffice", parent=dead, birth_epoch=epoch)
+                agent_id_counter += 1
+                # Replace the dead agent with the new one
+                agent_population[idx] = new_agent
+                network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
+                # Update the cluster_propaganda mapping to the new agent's ID
+                network.cluster_propaganda[cluster_id] = new_agent["id"]
+                print(f"✨ Propaganda Office agent {dead['id']} respawned in Cluster {cluster_id} as agent {new_agent['id']} at epoch {epoch}.")
+                continue # Skip the default agent replacement logic
+
+        # Default agent replacement (if not a Propaganda Office respawn)
         new_agent = make_agent(agent_id_counter, parent=dead, birth_epoch=epoch)
         agent_id_counter += 1
         agent_population[idx] = new_agent
         network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
 
-    # Recalculate centrality and cluster_map after agent death and replacement
-    # This section is now redundant as the recalculation happens at the start of the loop
-    # clusters = list(greedy_modularity_communities(network))
-    # cluster_map = {}
-    # for i, group in enumerate(clusters):
-    #     for node in group:
-    #         cluster_map[node] = i
-    # centrality = nx.betweenness_centrality(network)
-    # for a in agent_population:
-    #     a["cluster"] = cluster_map.get(a["id"], -1)
-    #     a["influence"] = centrality.get(a["id"], 0) # Use .get() with a default value
-
-    # --- Martyr/Founder/Trauma Event Logic (injects founding ideal on death of highly influential agent or betrayal) ---
-        cluster_id = cluster_map.get(dead["id"], -1)
-        is_martyr = (
-            (dead["score"] > np.percentile([a["score"] for a in agent_population], 90)) or
-            (dead.get("influence", 0) > np.percentile(list(centrality.values()), 90)) or
-            (abs(dead["karma"]) > np.percentile([abs(a["karma"]) for a in agent_population], 90))
-        )
-        betrayal = False
-        if cluster_id in network.cluster_founding_ideals:
+        # FoundingDescendant Spawning Logic (NEW/MODIFIED)
+        # Only spawn FoundingDescendant if not a Propaganda Office respawn and in a valid cluster
+        if cluster_id != -1: # Only in valid clusters
+            # Calculate probability based on cluster score (higher score = lower probability)
             cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-            if len(cluster_agents) >= 3:
-                trust_matrix = np.array([[agent["trust"].get(other["id"], 0) for other in cluster_agents] for agent in cluster_agents])
-                betrayal = np.mean(trust_matrix) < -5  # Tune threshold
+            cluster_score = np.mean([a["score"] for a in cluster_agents]) if cluster_agents else 0
+            all_scores = [a["score"] for a in agent_population]
+            max_score = max(all_scores) if all_scores else 1e-6 # Avoid division by zero
 
-        if (is_martyr or betrayal) and cluster_id in network.cluster_founding_ideals:
-            network.cluster_founding_ideals[cluster_id].append({
-                'epoch': epoch,
-                'ideal': np.mean([a["karma"] for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]),
-                'idolization': max([a["score"] for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]),
-                'decay': 0.0,
-                'layer': len(network.cluster_founding_ideals[cluster_id]),
-                'founder': dead["id"] if is_martyr else None,
-            })
+            # Probability decreases as cluster score increases
+            # Example: 10% chance at low scores, decreasing towards 0-2.5% at high scores
+            base_prob = 0.10
+            score_reduction_factor = 0.075 # Reduces probability by up to 7.5%
+            prob_founding_descendant = max(0.025, base_prob - (cluster_score / max_score) * score_reduction_factor)
+
+            if random.random() < prob_founding_descendant:
+                new_agent["strategy"] = "FoundingDescendant"
+                print(f"🧬 Agent {new_agent['id']} spawned as FoundingDescendant in Cluster {cluster_id} at epoch {epoch}.")
+            else:
+                 # If not FoundingDescendant or Propaganda Office, revert to the original 1/3 chance of random strategy mutation
+                 # Ensure the original mutation logic is also not applied to Propaganda Offices
+                 if new_agent["strategy"] != "PropagandaOffice" and random.random() < 1/3:
+                      # Exclude FoundingDescendant and PropagandaOffice from random mutation pool
+                      available_mutation_strategies = [s for s in strategy_choices_weighted if s not in ["FoundingDescendant", "PropagandaOffice"]]
+                      if available_mutation_strategies:
+                           new_agent["strategy"] = random.choice(available_mutation_strategies)
+
+
+        # --- Check for NEW Propaganda Office Creation (if the dead agent wasn't an office) ---
+        # This logic is for creating *new* offices in clusters that don't have one.
+        # It should ideally consider the replaced agent's cluster.
+        # Let's keep it associated with the *dead* agent's cluster for now.
+        if not is_propaganda_office:
+            cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
+            # Need to check the *current* state of the cluster *after* replacement for size and existing office
+            cluster_agents_for_new_office = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id_for_new_office]
+            num_clusters = len(set(cluster_map.values()))
+            max_offices = max(1, num_clusters // 4)
+            existing_offices = sum(1 for a in agent_population if a["strategy"] == "PropagandaOffice")
+            # Check if the cluster *already* has a propaganda office (either newly spawned or existing)
+            has_office = any(a["strategy"] == "PropagandaOffice" and a.get("cluster", -1) == cluster_id_for_new_office for a in agent_population)
+
+            if (
+                cluster_id_for_new_office != -1
+                and len(cluster_agents_for_new_office) >= 5 # Minimum size 5 for new office creation
+                and not has_office # Ensure the cluster doesn't have an office already
+                and existing_offices < max_offices
+                # Removed: and cluster_id_for_new_office not in network.cluster_propaganda # Redundant check with has_office
+            ):
+                # Convert one agent in the cluster to PropagandaOffice
+                # Select from the *current* agents in the cluster after replacement
+                office_candidate = random.choice(cluster_agents_for_new_office)
+                office_candidate["strategy"] = "PropagandaOffice"
+                network.cluster_propaganda[cluster_id_for_new_office] = office_candidate["id"]
+                # Optionally, set a cluster-level field for propaganda activity
+                print(f"🗞️ Cluster {cluster_id_for_new_office}: Propaganda Office established (agent {office_candidate['id']}) at epoch {epoch}.")
+
+
+        # --- Martyr/Founder/Trauma Event Logic (injects founding ideal on death of highly influential agent or betrayal) ---
+        # This logic runs on the death of an agent.
+        # We need to ensure the cluster still exists and has members *after* the replacement happens
+        # before calculating ideals based on current cluster state.
+        cluster_id_martyr = cluster_map.get(dead["id"], -1) # Still use dead agent's cluster ID
+
+        # Check if the cluster still exists and has enough members *after* replacements
+        cluster_agents_martyr = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id_martyr]
+
+        if cluster_id_martyr != -1 and len(cluster_agents_martyr) >= 3: # Minimum size 3 to check for betrayal/calculate metrics
+            is_martyr = (
+                (dead["score"] > np.percentile([a["score"] for a in agent_population], 90)) or
+                (dead.get("influence", 0) > np.percentile(list(centrality.values()), 90)) or
+                (abs(dead["karma"]) > np.percentile([abs(a["karma"]) for a in agent_population], 90))
+            )
+            betrayal = False
+            # Only check for betrayal if there are enough agents in the cluster to form a trust matrix
+            if len(cluster_agents_martyr) >= 3:
+                # Build trust matrix only for agents *within* the cluster
+                trust_matrix = np.array([[agent["trust"].get(other["id"], 0) for other in cluster_agents_martyr] for agent in cluster_agents_martyr])
+                # Avoid division by zero if trust_matrix is empty or all zeros
+                if trust_matrix.size > 0:
+                     betrayal = np.mean(trust_matrix) < -5  # Tune threshold
+
+            # Only add a new ideal layer if a martyr/betrayal event occurs AND the cluster is being tracked
+            if (is_martyr or betrayal) and cluster_id_martyr in network.cluster_founding_ideals:
+                 # Ensure founding_ideals_records exists before appending (this is used later for the DataFrame)
+                 # This is still not ideal placement for initializing founding_ideals_records, but preserving original flow for now.
+                 if 'founding_ideals_records' not in locals():
+                      founding_ideals_records = []
+                 network.cluster_founding_ideals[cluster_id_martyr].append({
+                     'epoch': epoch,
+                     'ideal': np.mean([a["karma"] for a in cluster_agents_martyr]), # Calculate ideal based on *current* cluster members
+                     'idolization': max([a["score"] for a in cluster_agents_martyr]), # Calculate idolization based on *current* cluster members
+                     'decay': 0.0, # Decay needs to be implemented over time
+                     'layer': len(network.cluster_founding_ideals[cluster_id_martyr]),
+                     'founder': dead["id"] if is_martyr else None, # Founder is the dead agent if it was a martyr
+                 })
 
 
     # --- TIME-SERIES LOGGING: append to logs at END of each epoch (NEW) ---
@@ -468,6 +650,7 @@ for epoch in range(max_epochs):
     mean_score_ts.append(np.mean([a["score"] for a in agent_population]))
     for strat in strategy_karma_ts.keys():
         strat_agents = [a for a in agent_population if a["strategy"] == strat]
+        # Ensure there are agents for the strategy before calculating mean
         mean_strat_karma = np.mean([a["karma"] for a in strat_agents]) if strat_agents else np.nan
         strategy_karma_ts[strat].append(mean_strat_karma)
 
@@ -477,20 +660,34 @@ for a in agent_population:
     given = sum(a["trust"].values())
     received_list = []
     for tid in list(a["trust"].keys()):
-        if tid < len(agent_population):
-            receiving_agent = next((ag for ag in agent_population if ag["id"] == tid), None)
-            if receiving_agent and a["id"] in receiving_agent["trust"]:
-                received_list.append(receiving_agent["trust"][a["id"]])
+        # Check if tid is a valid index in agent_population
+        # This check is flawed as trust keys are agent IDs, not indices.
+        # A better approach is to look up the agent by ID.
+        # This requires iterating through agent_population for each tid, which can be slow.
+        # A dictionary mapping IDs to agents might be better if performance is critical.
+        # For now, keeping the original logic but acknowledging its potential issues.
+        receiving_agent = next((ag for ag in agent_population if ag["id"] == tid), None)
+        if receiving_agent and a["id"] in receiving_agent["trust"]:
+            received_list.append(receiving_agent["trust"][a["id"]])
+
     received = sum(received_list)
-    a["trust_given_log"].append(given)
-    a["trust_received_log"].append(received)
-    a["reciprocity_log"].append(given / (received + 1e-6) if received > 0 else 0)
+    # The original code appended to log lists here, but these logs are not used for the final df
+    # a["trust_given_log"].append(given)
+    # a["trust_received_log"].append(received)
+    # Avoid division by zero
+    a["trust_reciprocity"] = given / (received + 1e-6) if received != 0 else (1 if given > 0 else 0) # Added check for received == 0 and given > 0
+
     avg_perceived = np.mean(list(a["perceived_karma"].values())) if a["perceived_karma"] else 0
-    a["fairness_index"] = a["score"] / (avg_perceived + 1e-6) if avg_perceived != 0 else 0
+    # Avoid division by zero
+    a["fairness_index"] = a["score"] / (abs(avg_perceived) + 1e-6) if avg_perceived != 0 else (a["score"] if a["score"] >= 0 else 0) # Added abs and handle avg_perceived == 0
     if len([k for k in a["trust"] if a["trust"][k] > 0]) < ostracism_threshold:
         a["ostracized"] = True
-    a["score_efficiency"] = a["score"] / (abs(a["karma"]) + 1) if a["karma"] != 0 else 0
-    a["trust_reciprocity"] = np.mean(a["reciprocity_log"]) if a["reciprocity_log"] else 0
+    # Avoid division by zero
+    a["score_efficiency"] = a["score"] / (abs(a["karma"]) + 1) if a["karma"] != 0 else a["score"] # Added abs and handle a["karma"] == 0
+    # The original code calculated trust_reciprocity again here using the full log, but the log was only appended once above.
+    # Let's use the value calculated above.
+    # a["trust_reciprocity"] = np.mean(a["reciprocity_log"]) if a["reciprocity_log"] else 0
+
 
 # === OUTPUT ===
 df = pd.DataFrame([{
@@ -520,10 +717,16 @@ IPython.display.display(df.head(20))
 # === ADDITIONAL POST-HOC ANALYTICS ===
 
 # 1. Karma Ratio (In-Group vs Out-Group Karma)
-df["In-Out Karma Ratio"] = df.apply(
-    lambda row: round(row["In-Group Score"] / (row["Out-Group Score"] + 1e-6), 2) if row["Out-Group Score"] != 0 else float('inf'),
-    axis=1
-)
+if "In-Group Score" in df.columns and "Out-Group Score" in df.columns:
+    df["In-Out Karma Ratio"] = df.apply(
+        lambda row: round(row["In-Group Score"] / (row["Out-Group Score"] + 1e-6), 2) if row["Out-Group Score"] != 0 else float('inf'),
+        axis=1
+    )
+    print("\nCalculated In-Out Karma Ratio:")
+    display(df[["ID", "Tag", "Strategy", "In-Group Score", "Out-Group Score", "In-Out Karma Ratio"]].head())
+else:
+    print("\nSkipping In-Out Karma Ratio calculation: 'In-Group Score' or 'Out-Group Score' column not found.")
+
 
 # 2. Reputation Manipulation (Karma-Perception Delta)
 reputation_manipulators = df.sort_values(by="Karma-Perception Delta", ascending=False).head(5)
@@ -537,53 +740,72 @@ centrality_list = df["Influence Centrality"].values
 karma_list = df["True Karma"].values
 # Ignore nan if present
 mask = ~np.isnan(centrality_list) & ~np.isnan(karma_list)
-corr, pval = pearsonr(centrality_list[mask], karma_list[mask])
-
-print(f"\nPearson correlation between Influence Centrality and True Karma: r = {corr:.3f}, p = {pval:.3g}")
+# Ensure mask is not empty
+if np.any(mask):
+    corr, pval = pearsonr(centrality_list[mask], karma_list[mask])
+    print(f"\nPearson correlation between Influence Centrality and True Karma: r = {corr:.3f}, p = {pval:.3g}")
+else:
+    print("\nNot enough data to calculate Pearson correlation between Influence Centrality and True Karma.")
 
 # Optional scatter plot (ethics vs power)
 plt.figure(figsize=(8, 5))
-plt.scatter(df["Influence Centrality"], df["True Karma"], c=df["Cluster"], cmap="tab20", s=80, edgecolors="k")
-plt.xlabel("Influence Centrality (Network Power)")
-plt.ylabel("True Karma (Ethics/Morality)")
-plt.title("Ethics vs Power: Influence Centrality vs True Karma")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+# Handle potential NaN values in Cluster before plotting
+plot_df = df.dropna(subset=["Cluster"])
+if not plot_df.empty:
+    scatter = plt.scatter(plot_df["Influence Centrality"], plot_df["True Karma"], c=plot_df["Cluster"], cmap="tab20", s=80, edgecolors="k")
+    plt.xlabel("Influence Centrality (Network Power)")
+    plt.ylabel("True Karma (Ethics/Morality)")
+    plt.title("Ethics vs Power: Influence Centrality vs True Karma")
+    plt.grid(True)
+    plt.colorbar(scatter, label="Cluster ID") # Add colorbar
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Not enough data to plot Ethics vs Power.")
+
 
 # --- Cabal Detection Plot ---
 plt.figure(figsize=(10, 6))
-scatter = plt.scatter(
-    df["Influence Centrality"],
-    df["Score Efficiency"],
-    c=df["True Karma"],
-    cmap="coolwarm",
-    s=80,
-    edgecolors="k"
-)
-plt.title("🕳️ Cabal Detection: Influence vs Score Efficiency (colored by Karma)")
-plt.xlabel("Influence Centrality")
-plt.ylabel("Score Efficiency (Score / |Karma|)")
-cbar = plt.colorbar(scatter)
-cbar.set_label("True Karma")
-plt.grid(True)
-plt.show()
+# Handle potential NaN values in Cluster, Influence Centrality, Score Efficiency, True Karma before plotting
+plot_df = df.dropna(subset=["Cluster", "Influence Centrality", "Score Efficiency", "True Karma"])
+if not plot_df.empty:
+    scatter = plt.scatter(
+        plot_df["Influence Centrality"],
+        plot_df["Score Efficiency"],
+        c=plot_df["True Karma"],
+        cmap="coolwarm",
+        s=80,
+        edgecolors="k"
+    )
+    plt.title("🕳️ Cabal Detection: Influence vs Score Efficiency (colored by Karma)")
+    plt.xlabel("Influence Centrality")
+    plt.ylabel("Score Efficiency (Score / |Karma|)")
+    cbar = plt.colorbar(scatter)
+    cbar.set_label("True Karma")
+    plt.grid(True)
+    plt.show()
+else:
+     print("Not enough data to plot Cabal Detection.")
 
 # --- Karma Drift Plot for a sample of agents ---
 plt.figure(figsize=(12, 6))
-sample_agents = agent_population[:6]
-for a in sample_agents:
-    true_karma = a["karma_log"]
-    perceived_karma = a["perceived_log"]
-    x = list(range(len(true_karma)))
-    plt.plot(x, true_karma, label=f"Agent {a['id']} True", linestyle='-')
-    plt.plot(x, perceived_karma, label=f"Agent {a['id']} Perceived", linestyle='--')
-plt.title("📉 Karma Drift: True vs Perceived Karma Over Time")
-plt.xlabel("Interaction Rounds")
-plt.ylabel("Karma Score")
-plt.legend()
-plt.grid(True)
-plt.show()
+# Select sample agents that actually have karma_log data
+sample_agents = [a for a in agent_population if a["karma_log"]][:6]
+if sample_agents:
+    for a in sample_agents:
+        true_karma = a["karma_log"]
+        perceived_karma = a["perceived_log"]
+        x = list(range(len(true_karma)))
+        plt.plot(x, true_karma, label=f"Agent {a['id']} True", linestyle='-')
+        plt.plot(x, perceived_karma, label=f"Agent {a['id']} Perceived", linestyle='--')
+    plt.title("📉 Karma Drift: True vs Perceived Karma Over Time")
+    plt.xlabel("Interaction Rounds")
+    plt.ylabel("Karma Score")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+else:
+    print("No agents with karma log data to plot Karma Drift.")
 
 # --- SERIAL MANIPULATORS ANALYTICS ---
 
@@ -594,12 +816,14 @@ serial_manipulator_threshold = 5  # e.g., mean delta > 5
 serial_manipulators = []
 for a in agent_population:
     deltas = a["karma_perception_delta_log"]
+    # Ensure deltas list is not empty before calculations
     if len(deltas) >= min_steps:
         # Count how many times delta was "high" (manipulating) and calculate mean/max
         high_count = sum(np.array(deltas) > serial_manipulator_threshold)
         mean_delta = np.mean(deltas)
         max_delta = np.max(deltas)
-        if high_count > len(deltas) * 0.5 and mean_delta > serial_manipulator_threshold:  # e.g. more than half the time
+        # Ensure mean_delta is not NaN before comparison
+        if not np.isnan(mean_delta) and high_count > len(deltas) * 0.5 and mean_delta > serial_manipulator_threshold:  # e.g. more than half the time
             serial_manipulators.append({
                 "ID": a["id"],
                 "Tag": a["tag"],
@@ -623,35 +847,43 @@ import seaborn as sns
 
 # 1. Cluster-level audit for shadow cabal characteristics
 cluster_shadow_report = []
-for cluster_id in df["Cluster"].unique():
-    cluster_members = df[df["Cluster"] == cluster_id]
-    if len(cluster_members) < 3: continue  # Ignore tiny clusters
+# Ensure 'Cluster' column exists and is not empty
+if "Cluster" in df.columns and not df["Cluster"].dropna().empty:
+    for cluster_id in df["Cluster"].unique():
+        cluster_members = df[df["Cluster"] == cluster_id]
+        if len(cluster_members) < 3: continue  # Ignore tiny clusters
 
-    # Compute mean metrics for the cluster
-    mean_perceived_karma = cluster_members["Avg Perceived Karma"].mean()
-    mean_connections = cluster_members["Connections"].mean()
-    mean_score = cluster_members["Score"].mean()
-    mean_delta = cluster_members["Karma-Perception Delta"].mean()
-    max_delta = cluster_members["Karma-Perception Delta"].max()
+        # Compute mean metrics for the cluster, ensuring non-empty before mean calculation
+        mean_perceived_karma = cluster_members["Avg Perceived Karma"].mean() if not cluster_members["Avg Perceived Karma"].empty else np.nan
+        mean_connections = cluster_members["Connections"].mean() if not cluster_members["Connections"].empty else np.nan
+        mean_score = cluster_members["Score"].mean() if not cluster_members["Score"].empty else np.nan
+        mean_delta = cluster_members["Karma-Perception Delta"].mean() if not cluster_members["Karma-Perception Delta"].empty else np.nan
+        max_delta = cluster_members["Karma-Perception Delta"].max() if not cluster_members["Karma-Perception Delta"].empty else np.nan
 
-    # Count members with high connections and score but low recent manipulation
-    legacy_influence = cluster_members[
-        (cluster_members["Score"] > df["Score"].median()) &
-        (cluster_members["Karma-Perception Delta"].abs() < 5)
-    ]
-    # Shadow cabal flag: high trust/perceived_karma, not manipulating now
-    if mean_perceived_karma > 2 and len(legacy_influence) > 0:
-        cluster_shadow_report.append({
-            "Cluster": cluster_id,
-            "Mean Perceived Karma": round(mean_perceived_karma, 2),
-            "Mean Connections": round(mean_connections, 2),
-            "Mean Score": round(mean_score, 2),
-            "Mean Karma-Perception Delta": round(mean_delta, 2),
-            "Max Delta": round(max_delta, 2),
-            "Legacy Influencers": legacy_influence[["ID", "Strategy", "Score", "Connections", "Avg Perceived Karma"]].values.tolist(),
-            "Legacy Influence Count": len(legacy_influence),
-            "Members": cluster_members["ID"].tolist()
-        })
+        # Count members with high connections and score but low recent manipulation
+        # Ensure df["Score"] and df["Karma-Perception Delta"].abs() are not empty before comparison
+        median_score = df["Score"].median() if not df["Score"].empty else 0
+        legacy_influence = cluster_members[
+            (cluster_members["Score"] > median_score) &
+            (cluster_members["Karma-Perception Delta"].abs() < 5)
+        ]
+        # Shadow cabal flag: high trust/perceived_karma, not manipulating now
+        # Ensure mean_perceived_karma is not NaN
+        if not np.isnan(mean_perceived_karma) and mean_perceived_karma > 2 and len(legacy_influence) > 0:
+            cluster_shadow_report.append({
+                "Cluster": cluster_id,
+                "Mean Perceived Karma": round(mean_perceived_karma, 2),
+                "Mean Connections": round(mean_connections, 2) if not np.isnan(mean_connections) else np.nan,
+                "Mean Score": round(mean_score, 2) if not np.isnan(mean_score) else np.nan,
+                "Mean Karma-Perception Delta": round(mean_delta, 2) if not np.isnan(mean_delta) else np.nan,
+                "Max Delta": round(max_delta, 2) if not np.isnan(max_delta) else np.nan,
+                "Legacy Influencers": legacy_influence[["ID", "Strategy", "Score", "Connections", "Avg Perceived Karma"]].values.tolist(),
+                "Legacy Influence Count": len(legacy_influence),
+                "Members": cluster_members["ID"].tolist()
+            })
+else:
+    print("Skipping Shadow Cabal Detection: 'Cluster' column not found or empty.")
+
 
 # 2. Show all detected shadow cabals with a summary
 if cluster_shadow_report:
@@ -671,43 +903,112 @@ if not shadow_cabals_df.empty:
 # 4. Optional: Visualize clusters with shadow cabal markers (colors by shadow cabal flag)
 shadow_cabal_clusters = [sc['Cluster'] for sc in cluster_shadow_report]
 plt.figure(figsize=(8, 5))
-sns.scatterplot(
-    data=df, x="Influence Centrality", y="True Karma",
-    hue=df["Cluster"].apply(lambda x: "Shadow Cabal" if x in shadow_cabal_clusters else "Other"),
-    style=df["Cluster"].apply(lambda x: "Shadow Cabal" if x in shadow_cabal_clusters else "Other"),
-    s=90
-)
-plt.xlabel("Influence Centrality (Network Power)")
-plt.ylabel("True Karma (Ethics/Morality)")
-plt.title("Shadow Cabal Map: Ethics vs Power (Shadow Cabals Highlighted)")
-plt.grid(True)
-plt.tight_layout()
-plt.legend()
-plt.show()
+# Handle potential NaN values in Cluster before plotting
+plot_df = df.dropna(subset=["Cluster"])
+if not plot_df.empty:
+    sns.scatterplot(
+        data=plot_df, x="Influence Centrality", y="True Karma",
+        hue=plot_df["Cluster"].apply(lambda x: "Shadow Cabal" if x in shadow_cabal_clusters else "Other"),
+        style=plot_df["Cluster"].apply(lambda x: "Shadow Cabal" if x in shadow_cabal_clusters else "Other"),
+        s=90
+    )
+    plt.xlabel("Influence Centrality (Network Power)")
+    plt.ylabel("True Karma (Ethics/Morality)")
+    plt.title("Shadow Cabal Map: Ethics vs Power (Shadow Cabals Highlighted)")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.legend()
+    plt.show()
+else:
+    print("Not enough data to plot Shadow Cabal Map.")
 
 # --- Founding Ideals & Institutional Memory Export ---
 print("\n==== CLUSTER FOUNDING IDEALS ====\n")
-for cid, ideals in network.cluster_founding_ideals.items():
-    print(f"Cluster {cid}:")
-    for i, ideal in enumerate(ideals):
-        age = max_epochs - ideal["epoch"]
-        print(f"  Layer {i}: Ideal {ideal['ideal']:.2f}, Idolization {ideal['idolization']:.2f}, Age {age}, Decay {ideal['decay']:.4f}, Founder {ideal['founder']}")
+# Ensure network.cluster_founding_ideals exists and is not empty
+if hasattr(network, "cluster_founding_ideals") and network.cluster_founding_ideals:
+    for cid, ideals in network.cluster_founding_ideals.items():
+        print(f"Cluster {cid}:")
+        for i, ideal in enumerate(ideals):
+            # Ensure epoch is within reasonable bounds before calculation
+            age = max_epochs - ideal["epoch"] if ideal["epoch"] <= max_epochs else np.nan
+            print(f"  Layer {i}: Ideal {ideal['ideal']:.2f}, Idolization {ideal['idolization']:.2f}, Age {age}, Decay {ideal['decay']:.4f}, Founder {ideal['founder']}")
+else:
+    print("No cluster founding ideals data available.")
+
 
 # Optional: Export as DataFrame
 founding_ideals_records = []
-for cid, ideals in network.cluster_founding_ideals.items():
-    for i, ideal in enumerate(ideals):
-        founding_ideals_records.append({
-            "Cluster": cid,
-            "Layer": i,
-            "Ideal": ideal["ideal"],
-            "Idolization": ideal["idolization"],
-            "Decay": ideal["decay"],
-            "Founder": ideal["founder"],
-            "Epoch": ideal["epoch"]
-        })
+if hasattr(network, "cluster_founding_ideals") and network.cluster_founding_ideals:
+    for cid, ideals in network.cluster_founding_ideals.items():
+        for i, ideal in enumerate(ideals):
+            founding_ideals_records.append({
+                "Cluster": cid,
+                "Layer": i,
+                "Ideal": ideal["ideal"],
+                "Idolization": ideal["idolization"],
+                "Decay": ideal["decay"],
+                "Founder": ideal["founder"],
+                "Epoch": ideal["epoch"]
+            })
 founding_ideals_df = pd.DataFrame(founding_ideals_records)
 display(founding_ideals_df)
+
+# Ensure founding_ideals_df is not empty and has required columns for ideal vs current karma analysis
+if founding_ideals_df is not None and not founding_ideals_df.empty and all(col in founding_ideals_df.columns for col in ['Cluster', 'Ideal', 'Epoch']):
+    # Calculate the mean True Karma for each cluster from df
+    # Ensure df has the 'Cluster' and 'True Karma' columns
+    if "Cluster" in df.columns and "True Karma" in df.columns:
+        current_mean_karma_per_cluster = df.groupby("Cluster")["True Karma"].mean().reset_index()
+        current_mean_karma_per_cluster.rename(columns={"True Karma": "Current Mean True Karma"}, inplace=True)
+
+        # Merge with founding_ideals_df
+        founding_ideals_with_current = pd.merge(
+            founding_ideals_df,
+            current_mean_karma_per_cluster,
+            on="Cluster",
+            how="left" # Use left merge to keep all founding ideals
+        )
+
+        # Calculate the difference between founding ideal karma and current mean karma
+        # Ensure 'Current Mean True Karma' column exists after merge
+        if "Current Mean True Karma" in founding_ideals_with_current.columns:
+             founding_ideals_with_current["Ideal-Current Karma Delta"] = (
+                 founding_ideals_with_current["Ideal"] - founding_ideals_with_current["Current Mean True Karma"]
+             )
+
+             print("\n==== FOUNDING IDEALS VS CURRENT KARMA ====\n")
+             display(founding_ideals_with_current)
+
+             # Visualization code for ideal vs current karma
+             if founding_ideals_with_current is not None and not founding_ideals_with_current.empty and all(col in founding_ideals_with_current.columns for col in ['Cluster', 'Ideal', 'Current Mean True Karma']):
+                 plt.figure(figsize=(10, 6))
+                 scatter = plt.scatter(
+                     founding_ideals_with_current["Ideal"],
+                     founding_ideals_with_current["Current Mean True Karma"],
+                     c=founding_ideals_with_current["Cluster"],
+                     cmap="tab20",
+                     s=100,
+                     edgecolors="k"
+                 )
+                 plt.xlabel("Founding Ideal Karma (Epoch 0)")
+                 plt.ylabel("Final Mean Cluster True Karma")
+                 plt.title("Founding Ideal Karma vs. Final Mean Cluster True Karma (by Founder Strategy)")
+                 plt.axhline(0, color='grey', linestyle='--', linewidth=0.8) # Add a line at 0 karma
+                 plt.axvline(0, color='grey', linestyle='--', linewidth=0.8) # Add a line at 0 karma
+                 plt.grid(True, linestyle='--', alpha=0.6)
+                 plt.legend(title="Founder Strategy", bbox_to_anchor=(1.05, 1), loc='upper left')
+                 plt.tight_layout()
+                 plt.show()
+             else:
+                 print("Not enough data to plot Founding Ideal Karma vs. Current Mean Cluster Karma.")
+        else:
+             print("Skipping Ideal vs Current Karma analysis and visualization: 'Current Mean True Karma' column not found after merging.")
+    else:
+        print("Skipping Ideal vs Current Karma analysis and visualization: 'Cluster' or 'True Karma' column not found in main DataFrame.")
+
+else:
+    print("Founding ideals DataFrame is empty or missing required columns. Skipping founding ideal analysis and visualization.")
+
 
 # --- Propaganda Office Analytics ---
 
@@ -725,19 +1026,22 @@ else:
 
     # 2. Cluster-level analysis: Compare clusters with and without Propaganda Offices
     clusters_with_office = list(office_clusters)
-    clusters_without_office = [c for c in df["Cluster"].unique() if c not in clusters_with_office]
+    # Ensure df has 'Cluster' column before filtering
+    clusters_without_office = [c for c in df["Cluster"].unique() if c not in clusters_with_office] if "Cluster" in df.columns else []
 
     def cluster_summary(cluster_id):
-        members = df[df["Cluster"] == cluster_id]
+        # Ensure df has 'Cluster' column before filtering
+        members = df[df["Cluster"] == cluster_id] if "Cluster" in df.columns else pd.DataFrame()
+        # Ensure members DataFrame is not empty before calculating means
         return {
             "Cluster": cluster_id,
             "Members": len(members),
-            "Mean True Karma": round(members["True Karma"].mean(), 2),
-            "Mean Perceived Karma": round(members["Avg Perceived Karma"].mean(), 2),
-            "Mean Delta": round(members["Karma-Perception Delta"].mean(), 2),
-            "Mean Score": round(members["Score"].mean(), 2),
-            "Total Influence": round(members["Influence Centrality"].sum(), 3),
-            "Office Agent": int(prop_offices[0]["id"]) if cluster_id in office_clusters else None
+            "Mean True Karma": round(members["True Karma"].mean(), 2) if not members["True Karma"].empty else np.nan,
+            "Mean Perceived Karma": round(members["Avg Perceived Karma"].mean(), 2) if not members["Avg Perceived Karma"].empty else np.nan,
+            "Mean Delta": round(members["Karma-Perception Delta"].mean(), 2) if not members["Karma-Perception Delta"].empty else np.nan,
+            "Mean Score": round(members["Score"].mean(), 2) if not members["Score"].empty else np.nan,
+            "Total Influence": round(members["Influence Centrality"].sum(), 3) if not members["Influence Centrality"].empty else np.nan,
+            "Office Agent": next((a["ID"] for a in prop_offices if a["cluster"] == cluster_id), None) # Find the ID of the office agent in this cluster
         }
 
     print("\nClusters WITH Propaganda Office:\n")
@@ -751,35 +1055,47 @@ else:
         print(summary)
 
     # 3. Optional: Show effect size
-    with_office = df[df["Cluster"].isin(clusters_with_office)]
-    without_office = df[~df["Cluster"].isin(clusters_with_office)]
+    # Ensure df has 'Cluster' column before filtering
+    with_office = df[df["Cluster"].isin(clusters_with_office)] if "Cluster" in df.columns else pd.DataFrame()
+    without_office = df[~df["Cluster"].isin(clusters_with_office)] if "Cluster" in df.columns else pd.DataFrame()
 
     print("\n--- Aggregate Comparison (mean per agent) ---")
-    print(f"Mean Perceived Karma (Propaganda Office): {with_office['Avg Perceived Karma'].mean():.2f}")
-    print(f"Mean Perceived Karma (No Office): {without_office['Avg Perceived Karma'].mean():.2f}")
-    print(f"Mean Karma-Perception Delta (Propaganda Office): {with_office['Karma-Perception Delta'].mean():.2f}")
-    print(f"Mean Karma-Perception Delta (No Office): {without_office['Karma-Perception Delta'].mean():.2f}")
-    print(f"Mean Score (Propaganda Office): {with_office['Score'].mean():.2f}")
-    print(f"Mean Score (No Office): {without_office['Score'].mean():.2f}")
+    # Ensure DataFrames are not empty before calculating means
+    print(f"Mean Perceived Karma (Propaganda Office): {with_office['Avg Perceived Karma'].mean():.2f}" if not with_office['Avg Perceived Karma'].empty else "N/A")
+    print(f"Mean Perceived Karma (No Office): {without_office['Avg Perceived Karma'].mean():.2f}" if not without_office['Avg Perceived Karma'].empty else "N/A")
+    print(f"Mean Karma-Perception Delta (Propaganda Office): {with_office['Karma-Perception Delta'].mean():.2f}" if not with_office['Karma-Perception Delta'].empty else "N/A")
+    print(f"Mean Karma-Perception Delta (No Office): {without_office['Karma-Perception Delta'].mean():.2f}" if not without_office['Karma-Perception Delta'].empty else "N/A")
+    print(f"Mean Score (Propaganda Office): {with_office['Score'].mean():.2f}" if not with_office['Score'].empty else "N/A")
+    print(f"Mean Score (No Office): {without_office['Score'].mean():.2f}" if not without_office['Score'].empty else "N/A")
+
 
     # 4. Optionally, visualize cluster means by office status
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(8, 5))
+    # Ensure DataFrames are not empty before calculating means
     means = [
-        with_office['Avg Perceived Karma'].mean(),
-        without_office['Avg Perceived Karma'].mean(),
-        with_office['Karma-Perception Delta'].mean(),
-        without_office['Karma-Perception Delta'].mean()
+        with_office['Avg Perceived Karma'].mean() if not with_office['Avg Perceived Karma'].empty else np.nan,
+        without_office['Avg Perceived Karma'].mean() if not without_office['Avg Perceived Karma'].empty else np.nan,
+        with_office['Karma-Perception Delta'].mean() if not with_office['Karma-Perception Delta'].empty else np.nan,
+        without_office['Karma-Perception Delta'].mean() if not without_office['Karma-Perception Delta'].empty else np.nan
     ]
+    # Filter out NaN means for plotting
+    plot_means = [m for m in means if not np.isnan(m)]
     bar_labels = [
         "With Office: Perceived Karma",
         "No Office: Perceived Karma",
         "With Office: Δ Karma-Percept",
         "No Office: Δ Karma-Percept"
     ]
-    ax.bar(bar_labels, means, color=['#7dafff', '#c0c0c0', '#7dafff', '#c0c0c0'])
-    ax.set_ylabel("Mean Value")
-    ax.set_title("Propaganda Office Effect on Cluster Reputation")
-    plt.xticks(rotation=30)
-    plt.tight_layout()
-    plt.show()
+    # Filter labels to match plot_means
+    plot_labels = [label for label, mean in zip(bar_labels, means) if not np.isnan(mean)]
+
+    if plot_means:
+        ax.bar(plot_labels, plot_means, color=['#7dafff', '#c0c0c0', '#7dafff', '#c0c0c0'][:len(plot_labels)])
+        ax.set_ylabel("Mean Value")
+        ax.set_title("Propaganda Office Effect on Cluster Reputation")
+        plt.xticks(rotation=30)
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("Not enough data to plot Propaganda Office Effect on Cluster Reputation.")
