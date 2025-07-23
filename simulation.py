@@ -243,7 +243,7 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
         "generation": birth_epoch // 120
     }
     if strategy == "Accountant":
-    agent["laundered_score"] = {}  # Maps other agent IDs to amount laundered for them
+        agent["laundered_score"] = {}  # Maps other agent IDs to amount laundered for them
 
 # -- Initialize agents --
 agent_population = []
