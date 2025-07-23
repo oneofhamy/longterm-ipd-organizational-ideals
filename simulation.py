@@ -714,11 +714,11 @@ for epoch in range(max_epochs):
         top_cut = n // 3
         mid_cut = 2 * n // 3
 
-     #   if cluster_id in sorted_clusters[:top_cut]:
-     #       # TOP 1/3: maintain >= 10% descendants at all times
-     #       cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-     #       descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
-     #       descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
+    #   if cluster_id in sorted_clusters[:top_cut]:
+    #       # TOP 1/3: maintain >= 10% descendants at all times
+    #       cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+    #       descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
+    #       descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
 
             if descendant_ratio < 0.10:
                 new_agent["strategy"] = "FoundingDescendant"
