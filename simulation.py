@@ -329,17 +329,17 @@ def belief_interact(a, b, rounds=5):
             cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == b["cluster"]]
             true_cluster_score = sum(ag["score"] for ag in cluster_agents) / len(cluster_agents)
             # Store this in a["perceived_cluster_score"], with fast decay unless chosen again
-            if not hasattr(a, "perceived_cluster_score"):
-                a.perceived_cluster_score = {}
-            a.perceived_cluster_score[b["cluster"]] = {"score": true_cluster_score, "decay": 1.0}
+            if "perceived_cluster_score" not in a:
+                a["perceived_cluster_score"] = {}
+            a["perceived_cluster_score"][b["cluster"]] = {"score": true_cluster_score, "decay": 1.0}
 
         # Decay these at the end of each epoch (faster than normal memory)
         for a in agent_population:
-            if hasattr(a, "perceived_cluster_score"):
-                for cid in list(a.perceived_cluster_score.keys()):
-                    a.perceived_cluster_score[cid]["decay"] *= 0.85  # 3x faster
-                    if a.perceived_cluster_score[cid]["decay"] < 0.05:
-                        del a.perceived_cluster_score[cid]
+            if "perceived_cluster_score" in a:
+                for cid in list(a["perceived_cluster_score"].keys()):
+                    a["perceived_cluster_score"][cid]["decay"] *= 0.85
+                    if a["perceived_cluster_score"][cid]["decay"] < 0.05:
+                        del a["perceived_cluster_score"][cid]
 
         # Define how "visibility" increases: e.g. add +20% per successful cooperation up to 100% clarity
         if a["strategy"] == "ShadowBroker" and act_b == "cooperate" and b.get("cluster", -1) is not None:
