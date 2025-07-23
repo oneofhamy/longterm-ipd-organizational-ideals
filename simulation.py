@@ -178,24 +178,24 @@ strategy_functions = {
 # --- Agent initialization weights (updated) ---
 init_agents = 200
 strategy_population = {
-    "MoQ": 4,
-    "GMoQ": 2,
-    "HGMoQ": 1,
-    "TFT": 7,
-    "GTFT": 5,
-    "HGTFT": 2,
-    "ALLC": 2,
-    "ALLD": 5,
-    "WSLS": 8,
-    "Ethnocentric": 12,
-    "Random": 5,
-    "GrimTrigger": 3,
-    "ClusterUtilitarian": 4,
-    "GlobalUtilitarian": 1,
-    "Factionalist": 12,
-    "Saboteur": 1,
-    "Conformist": 25,
-    "ShadowBroker": 1,
+    "MoQ": 4,                     # 4%
+    "GMoQ": 2,                    # 2%
+    "HGMoQ": 1,                   # 1%
+    "TFT": 7,                     # 7%
+    "GTFT": 5,                    # 5%
+    "HGTFT": 2,                   # 2%
+    "ALLC": 2,                    # 2%
+    "ALLD": 5,                    # 5%
+    "WSLS": 8,                    # 8%
+    "Ethnocentric": 12,           # 12%
+    "Random": 5,                  # 5%
+    "GrimTrigger": 3,             # 3%
+    "ClusterUtilitarian": 4,      # 4%
+    "GlobalUtilitarian": 1,       # 1%
+    "Factionalist": 12,           # 12%
+    "Saboteur": 1,                # 1%
+    "Conformist": 25,             # 25%
+    "ShadowBroker": 1,            # 1%
     # PropagandaOffice and FoundingDescendant are only created by event, never initial
 }
 # Weighted list for random sampling
