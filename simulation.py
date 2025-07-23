@@ -714,23 +714,23 @@ for epoch in range(max_epochs):
         top_cut = n // 3
         mid_cut = 2 * n // 3
 
-        if cluster_id in sorted_clusters[:top_cut]:
-            # TOP 1/3: maintain >= 10% descendants at all times
-            cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-            descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
-            descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
+     #   if cluster_id in sorted_clusters[:top_cut]:
+     #       # TOP 1/3: maintain >= 10% descendants at all times
+     #       cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+     #       descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
+     #       descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
 
             if descendant_ratio < 0.10:
                 new_agent["strategy"] = "FoundingDescendant"
                 new_agent["is_descendant"] = True
-                print(f"🧬 Top cluster {cluster_id}: Enforcing descendant quota. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+                print(f" Top cluster {cluster_id}: Enforcing descendant quota. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
             # else: No forced promotion; child inherits normally or as rebel (handled elsewhere)
         elif cluster_id in sorted_clusters[top_cut:mid_cut]:
             # MIDDLE 1/3: 5% chance to spawn descendant
             if random.random() < 0.05:
                 new_agent["strategy"] = "FoundingDescendant"
                 new_agent["is_descendant"] = True
-                print(f"🧬 Middle cluster {cluster_id}: 5% chance descendant promotion. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+                print(f" Middle cluster {cluster_id}: 5% chance descendant promotion. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
         # Else: bottom 1/3 never gets new descendants (do nothing)t's cluster for now.
         if not is_propaganda_office:
             cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
