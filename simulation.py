@@ -347,7 +347,7 @@ def belief_interact(a, b, rounds=5):
             # ShadowBroker builds up knowledge of that cluster's karma difference
             if "cluster_karma_visibility" not in broker:
                 broker["cluster_karma_visibility"] = {}
-            vis = broker["cluster_karma_visibility"].get(cluster_id, 0.0)
+            vis = broker["cluster_karma_visibility"]get(cluster_id, 0.0)
             broker["cluster_karma_visibility"][cluster_id] = vis
 
             # Save the latest karma difference for this cluster for the broker
