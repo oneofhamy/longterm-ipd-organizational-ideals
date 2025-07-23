@@ -14,8 +14,8 @@ np.random.seed(42)
 # Define payoff matrix
 payoff_matrix = {
     ("cooperate", "cooperate"): (3, 3),
-    ("cooperate", "defect"): (0, 5),
-    ("defect", "cooperate"): (5, 0),
+    ("cooperate", "defect"): (0, 6),
+    ("defect", "cooperate"): (6, 0),
     ("defect", "defect"): (0, 0)
 }
 
