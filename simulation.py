@@ -609,6 +609,10 @@ for epoch in range(max_epochs):
                     if available_mutation_strategies:
                         a["strategy"] = random.choice([high_score_agent["strategy"], random.choice(available_mutation_strategies)])
 
+    # Define 'is_propaganda_office' function to check if an agent is a Propaganda Office.
+    def is_propaganda_office(agent):
+        return agent.get("type") == "Propaganda Office"
+    
     # --- AGING & DEATH (agents die after lifespan, replaced by child agent)
     to_replace = []
     for idx, agent in enumerate(agent_population):
@@ -622,9 +626,12 @@ for epoch in range(max_epochs):
     for idx in to_replace:
         dead = agent_population[idx]
         try:
+            if is_propaganda_office(dead):
+                # Handle specific logic for Propaganda Office if needed
+                pass
             network.remove_node(dead["id"])
         except Exception:
-            pass # Node might have already been removed if it was a Propaganda Office that respawned
+            pass # Node might have already been removed if it was a Propaganda Office
 
         cluster_id = cluster_map.get(dead["id"], -1)
         is_propaganda_office = dead["strategy"] == "PropagandaOffice"
