@@ -626,12 +626,12 @@ for epoch in range(max_epochs):
     for idx in to_replace:
         dead = agent_population[idx]
         try:
-            if is_propaganda_office(dead):
+            if dead["strategy"] == "PropagandaOffice":
                 # Handle specific logic for Propaganda Office if needed
                 pass
             network.remove_node(dead["id"])
         except Exception:
-            pass # Node might have already been removed if it was a Propaganda Office
+            pass  # Node might have already been removed if it was a Propaganda Office
 
         cluster_id = cluster_map.get(dead["id"], -1)
         is_propaganda_office = dead["strategy"] == "PropagandaOffice"
@@ -649,7 +649,7 @@ for epoch in range(max_epochs):
                 network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
                 # Update the cluster_propaganda mapping to the new agent's ID
                 network.cluster_propaganda[cluster_id] = new_agent["id"]
-                print(f"✨ Propaganda Office agent {dead['id']} respawned in Cluster {cluster_id} as agent {new_agent['id']} at epoch {epoch}.")
+                print(f" Propaganda Office agent {dead['id']} respawned in Cluster {cluster_id} as agent {new_agent['id']} at epoch {epoch}.")
                 continue # Skip the default agent replacement logic
 
         # 1/3 chance that child rebels and does NOT inherit parent's strategy/trait
