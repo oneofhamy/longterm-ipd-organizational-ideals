@@ -97,9 +97,8 @@ def factionalist_strategy(agent, partner, last_self=None, last_partner=None):
     return "cooperate" if agent["tag"] == partner["tag"] else "defect"
 
 def propaganda_office_strategy(agent, partner, last_self=None, last_partner=None):
-    # Only used for cluster-level reputation inflation/deflation, but for normal round just act as Random
-    # Insert special logic at post-interaction for cluster
-    return random_strategy(agent, partner, last_self, last_partner)
+    # Behaves like a cluster utilitarian (in-group cooperation, out-group defection)
+    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
 
 def saboteur_strategy(agent, partner, last_self=None, last_partner=None):
     # Pure defector, with possible special event effect (could try to target high-score)
@@ -160,7 +159,7 @@ strategy_functions = {
     "Conformist": conformist_strategy,
     "ShadowBroker": shadow_broker_strategy,
     "FoundingDescendant": founding_descendant_strategy,
-    "PropagandaOffice": propaganda_office_strategy, # Added PropagandaOffice
+    "PropagandaOffice": propaganda_office_strategy,
 }
 
 # --- Agent initialization weights (updated) ---
@@ -291,7 +290,6 @@ def belief_interact(a, b, rounds=5):
         else:
             act_b = strategy_functions[b["strategy"]](b, a, bmem[0], bmem[1])
 
-
         # Apology chance
         if act_a == "defect" and a["apology_available"] and random.random() < 0.2:
             a["score"] -= 1
@@ -301,6 +299,91 @@ def belief_interact(a, b, rounds=5):
             b["score"] -= 1
             b["apology_available"] = False
             act_b = "cooperate"
+
+        # Define how "visibility" increases: e.g. add +20% per successful cooperation up to 100% clarity
+        if a["strategy"] == "ShadowBroker" and act_b == "cooperate" and b.get("cluster", -1) is not None:
+            cluster_id = b["cluster"]
+            # ShadowBroker builds up knowledge of that cluster's karma difference
+            if not hasattr(a, "cluster_karma_visibility"):
+                a.cluster_karma_visibility = {}  # {cluster_id: percent_known (0-1)}
+            vis = a.cluster_karma_visibility.get(cluster_id, 0.0)
+            vis = min(vis + 0.2, 1.0)  # +20% per cooperation, capped at 100%
+            a.cluster_karma_visibility[cluster_id] = vis
+
+            # Save the latest karma difference for this cluster for the broker
+            cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == cluster_id]
+            if cluster_agents:
+                real_karma = np.mean([ag["karma"] for ag in cluster_agents])
+                perceived_karma = np.mean([
+                    np.mean(list(ag["perceived_karma"].values())) if ag["perceived_karma"] else 0
+                    for ag in cluster_agents
+                ])
+                karma_delta = real_karma - perceived_karma
+                if not hasattr(a, "cluster_karma_delta"):
+                    a.cluster_karma_delta = {}
+                a.cluster_karma_delta[cluster_id] = karma_delta
+
+        if b["strategy"] == "ShadowBroker" and act_a == "cooperate" and a.get("cluster", -1) is not None:
+            broker = b
+            cluster_id = a["cluster"]
+
+            # Build up visibility for the broker
+            if not hasattr(broker, "cluster_karma_visibility"):
+                broker.cluster_karma_visibility = {}
+            vis = broker.cluster_karma_visibility.get(cluster_id, 0.0)
+            vis = min(vis + 0.2, 1.0)
+            broker.cluster_karma_visibility[cluster_id] = vis
+
+            # Save latest karma difference for the broker
+            cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == cluster_id]
+            if cluster_agents:
+                real_karma = np.mean([ag["karma"] for ag in cluster_agents])
+                perceived_karma = np.mean([
+                    np.mean(list(ag["perceived_karma"].values())) if ag["perceived_karma"] else 0
+                    for ag in cluster_agents
+                ])
+                karma_delta = real_karma - perceived_karma
+                if not hasattr(broker, "cluster_karma_delta"):
+                    broker.cluster_karma_delta = {}
+                broker.cluster_karma_delta[cluster_id] = karma_delta
+
+            # Choose a random cluster (that isn't the cooperating agent's cluster) from those broker has visibility into
+            visible_clusters = [cid for cid, vis in broker.cluster_karma_visibility.items() if cid != cluster_id and vis > 0]
+            if visible_clusters:
+                peek_cluster = random.choice(visible_clusters)
+                peek_delta = broker.cluster_karma_delta.get(peek_cluster, 0)
+                # Agent stores peeked value in a special dict
+                if not hasattr(a, "shadow_peeks"):
+                    a.shadow_peeks = {}
+                a.shadow_peeks[peek_cluster] = {
+                    "value": peek_delta,
+                    "decay": 1.0  # Start at full, decay 3x as fast as memory
+                }
+
+        # If agent a is a Propaganda Office, and cooperates with in-cluster agent b, apply effect
+        if a["strategy"] == "PropagandaOffice" and act_a == "cooperate" and a.get("cluster", -1) == b.get("cluster", -1) and a.get("cluster", -1) != -1:
+            # Mask negative karma, boost reputation for b (as seen by all)
+            masked_karma = b["karma"]
+            if masked_karma < 0:
+                masked_karma = masked_karma * 0.2  # Mask 80% of negativity
+            inflation_bias = 0.5  # or whatever strength you like
+            for other_agent in agent_population:
+                if other_agent["id"] != b["id"]:
+                    previous = other_agent["perceived_karma"].get(b["id"], 0)
+                    new_perceived = previous * 0.7 + masked_karma * 0.25 + inflation_bias
+                    other_agent["perceived_karma"][b["id"]] = new_perceived
+
+        # And the same for b if b is the Propaganda Office
+        if b["strategy"] == "PropagandaOffice" and act_b == "cooperate" and b.get("cluster", -1) == a.get("cluster", -1) and b.get("cluster", -1) != -1:
+            masked_karma = a["karma"]
+            if masked_karma < 0:
+                masked_karma = masked_karma * 0.2
+            inflation_bias = 0.5
+            for other_agent in agent_population:
+                if other_agent["id"] != a["id"]:
+                    previous = other_agent["perceived_karma"].get(a["id"], 0)
+                    new_perceived = previous * 0.7 + masked_karma * 0.25 + inflation_bias
+                    other_agent["perceived_karma"][a["id"]] = new_perceived
 
         payoff = payoff_matrix[(act_a, act_b)]
         score_a += payoff[0]
@@ -368,6 +451,17 @@ def belief_interact(a, b, rounds=5):
     total_trust = a["trust"][b["id"]] + b["trust"][a["id"]]
     network.add_edge(a["id"], b["id"], weight=total_trust)
 
+    # SHADOWBROKER: Own karma always seen as 0 except by other shadowbrokers
+    for agent in [a, b]:
+        if agent["strategy"] == "ShadowBroker":
+            for other_agent in agent_population:
+                if other_agent["id"] == agent["id"]:
+                    continue  # skip self
+                if other_agent["strategy"] == "ShadowBroker":
+                    # See true karma difference (or just true karma)
+                    other_agent["perceived_karma"][agent["id"]] = agent["karma"]  # or whatever metric you want
+                else:
+                    other_agent["perceived_karma"][agent["id"]] = 0
 
 # --- Cluster Founding Ideals (NEW for generational power structure modeling) (Moved before the loop) ---
 if not hasattr(network, "cluster_founding_ideals"):
@@ -390,9 +484,12 @@ for epoch in range(max_epochs):
 
     centrality = nx.betweenness_centrality(network)
     for a in agent_population:
-        a["cluster"] = cluster_map.get(a["id"], -1)
-        a["influence"] = centrality.get(a["id"], 0) # Use .get() with a default value
+        if a["strategy"] == "ShadowBroker":
+            a["cluster"] = None  # or -1, just be consistent everywhere!
+        else:
+            a["cluster"] = cluster_map.get(a["id"], -1)
 
+    a["influence"] = centrality.get(a["id"], 0)
     # Calculate mean cluster score at the beginning of each epoch
     cluster_scores = {}
     for cluster_id in set(cluster_map.values()):
@@ -424,7 +521,6 @@ for epoch in range(max_epochs):
                         'founder': founder_candidate["id"],
                     })
 
-
     np.random.shuffle(agent_population)
     for i in range(0, len(agent_population) - 1, 2):
         a = agent_population[i]
@@ -438,43 +534,29 @@ for epoch in range(max_epochs):
         a["apology_available"] = True
 
     # --- Propaganda Office Cluster Influence (NEW) ---
-    # Iterate through agents and apply propaganda effects if in a cluster with an office
-    for agent in agent_population:
-        agent_cluster_id = agent.get("cluster", -1)
-        if agent_cluster_id != -1 and agent_cluster_id in network.cluster_propaganda:
-            # Get the office agent in this cluster
-            office_agent_id = network.cluster_propaganda[agent_cluster_id]
-            office_agent = next((a for a in agent_population if a["id"] == office_agent_id), None)
-
-            if office_agent: # Ensure the office agent is still alive
-                for other_agent in agent_population: # Iterate through all agents to update their perception of this agent
-                     if other_agent["id"] != agent["id"]: # Agents don't perceive themselves
-                        perception = other_agent["perceived_karma"].get(agent["id"], 0)
-
-                        # Propaganda effect 1: Mask Negative Karma (reduce impact of negative true karma on perception)
-                        # If true karma is negative, reduce the extent to which others perceive it as negative
-                        # Apply masking effect only if the agent being perceived is in the same cluster as the office
-                        if agent.get("cluster", -1) == agent_cluster_id:
-                            true_karma_impact = agent["karma"] * 0.5 # Base impact
-                            if agent["karma"] < 0:
-                                masking_factor = 0.8 # Reduce negative perception by 80%
-                                true_karma_impact = agent["karma"] * (1 - masking_factor) * 0.5
-                            else:
-                                # For positive or neutral karma, still use base impact
-                                true_karma_impact = agent["karma"] * 0.5
-                        else:
-                             # If the agent being perceived is NOT in the office's cluster, no masking
-                             true_karma_impact = agent["karma"] * 0.5
-
-
-                        # Propaganda effect 2: Inflate Perceived Karma (add a positive bias)
-                        inflation_bias = 0.1 # Add a small positive bias each epoch
-
-                        # Update perceived karma (simple additive model for demonstration)
-                        # Influence the perception of this agent by other_agent
-                        # The propaganda effect should primarily influence how other *within* the cluster perceive,
-                        # but could also influence those outside. Let's influence all for simplicity here.
-                        other_agent["perceived_karma"][agent["id"]] = perception + (true_karma_impact - perception) * 0.05 + inflation_bias # Small adjustment towards masked truth + bias
+    # --- Improved Propaganda Office Cluster Influence ---
+    for office_agent in agent_population:
+        if office_agent["strategy"] == "PropagandaOffice":
+            office_cluster_id = office_agent.get("cluster", -1)
+            if office_cluster_id == -1:
+                continue
+            # All agents in this cluster
+            cluster_members = [a for a in agent_population if a.get("cluster", -1) == office_cluster_id]
+            for target_agent in cluster_members:
+                # All other agents (including outsiders)
+                for other_agent in agent_population:
+                    if other_agent["id"] == target_agent["id"]:
+                        continue  # Don't self-perceive
+                    # Mask negative karma
+                    masked_karma = target_agent["karma"]
+                    if masked_karma < 0:
+                        masked_karma = masked_karma * 0.2  # Reduce visible negativity by 80%
+                    # Inflate perceived karma a bit (bias)
+                    inflation_bias = 0.5  # Strong bias, tune as desired
+                    # New perceived value = weighted blend of old perception, masked karma, and bias
+                    previous = other_agent["perceived_karma"].get(target_agent["id"], 0)
+                    new_perceived = previous * 0.7 + masked_karma * 0.25 + inflation_bias
+                    other_agent["perceived_karma"][target_agent["id"]] = new_perceived
 
     # --- Mutation every 30 epochs
     if epoch % 30 == 0 and epoch > 0:
@@ -487,7 +569,6 @@ for epoch in range(max_epochs):
                     available_mutation_strategies = [s for s in strategy_choices_weighted if s not in ["FoundingDescendant", "PropagandaOffice"]]
                     if available_mutation_strategies:
                         a["strategy"] = random.choice([high_score_agent["strategy"], random.choice(available_mutation_strategies)])
-
 
     # --- AGING & DEATH (agents die after lifespan, replaced by child agent)
     to_replace = []
@@ -637,7 +718,6 @@ for epoch in range(max_epochs):
                 # Optionally, set a cluster-level field for propaganda activity
                 print(f"🗞️ Cluster {cluster_id_for_new_office}: Propaganda Office established (agent {office_candidate['id']}) at epoch {epoch}.")
 
-
         # --- Martyr/Founder/Trauma Event Logic (injects founding ideal on death of highly influential agent or betrayal) ---
         # This logic runs on the death of an agent.
         # We need to ensure the cluster still exists and has members *after* the replacement happens
@@ -677,6 +757,13 @@ for epoch in range(max_epochs):
                      'founder': dead["id"] if is_martyr else None, # Founder is the dead agent if it was a martyr
                  })
 
+    # Shadow broker peeks decay 3x as fast as normal memory decay
+    for a in agent_population:
+        if hasattr(a, "shadow_peeks"):
+            for cid in list(a.shadow_peeks.keys()):
+                a.shadow_peeks[cid]["decay"] *= 0.85
+                if a.shadow_peeks[cid]["decay"] < 0.05:  # Drop if almost faded
+                    del a.shadow_peeks[cid]
 
     # --- TIME-SERIES LOGGING: append to logs at END of each epoch (NEW) ---
     mean_true_karma_ts.append(np.mean([a["karma"] for a in agent_population]))
@@ -725,7 +812,6 @@ for a in agent_population:
     # Let's use the value calculated above.
     # a["trust_reciprocity"] = np.mean(a["reciprocity_log"]) if a["reciprocity_log"] else 0
 
-
 # === OUTPUT ===
 df = pd.DataFrame([{
     "ID": a["id"],
@@ -752,7 +838,6 @@ import IPython
 IPython.display.display(df.head(20))
 
 # === ADDITIONAL POST-HOC ANALYTICS ===
-
 # 1. Karma Ratio (In-Group vs Out-Group Karma)
 if "In-Group Score" in df.columns and "Out-Group Score" in df.columns:
     df["In-Out Karma Ratio"] = df.apply(
@@ -763,7 +848,6 @@ if "In-Group Score" in df.columns and "Out-Group Score" in df.columns:
     display(df[["ID", "Tag", "Strategy", "In-Group Score", "Out-Group Score", "In-Out Karma Ratio"]].head())
 else:
     print("\nSkipping In-Out Karma Ratio calculation: 'In-Group Score' or 'Out-Group Score' column not found.")
-
 
 # 2. Reputation Manipulation (Karma-Perception Delta)
 reputation_manipulators = df.sort_values(by="Karma-Perception Delta", ascending=False).head(5)
@@ -799,7 +883,6 @@ if not plot_df.empty:
     plt.show()
 else:
     print("Not enough data to plot Ethics vs Power.")
-
 
 # --- Cabal Detection Plot ---
 plt.figure(figsize=(10, 6))
@@ -845,7 +928,6 @@ else:
     print("No agents with karma log data to plot Karma Drift.")
 
 # --- SERIAL MANIPULATORS ANALYTICS ---
-
 # 1. Define a minimum number of steps for stability (e.g., agents with at least 50 logged deltas)
 min_steps = 50
 serial_manipulator_threshold = 5  # e.g., mean delta > 5
@@ -877,9 +959,7 @@ print("\nSerial Reputation Manipulators (consistently high karma-perception delt
 display(serial_manipulators_df)
 
 # --- SHADOW CABAL DETECTION ANALYTIC ---
-
 print("\n==== SHADOW CABAL DETECTION & INFLUENCE AUDIT ====\n")
-
 import seaborn as sns
 
 # 1. Cluster-level audit for shadow cabal characteristics
@@ -920,7 +1000,6 @@ if "Cluster" in df.columns and not df["Cluster"].dropna().empty:
             })
 else:
     print("Skipping Shadow Cabal Detection: 'Cluster' column not found or empty.")
-
 
 # 2. Show all detected shadow cabals with a summary
 if cluster_shadow_report:
@@ -971,7 +1050,6 @@ if hasattr(network, "cluster_founding_ideals") and network.cluster_founding_idea
             print(f"  Layer {i}: Ideal {ideal['ideal']:.2f}, Idolization {ideal['idolization']:.2f}, Age {age}, Decay {ideal['decay']:.4f}, Founder {ideal['founder']}")
 else:
     print("No cluster founding ideals data available.")
-
 
 # Optional: Export as DataFrame
 founding_ideals_records = []
@@ -1046,9 +1124,7 @@ if founding_ideals_df is not None and not founding_ideals_df.empty and all(col i
 else:
     print("Founding ideals DataFrame is empty or missing required columns. Skipping founding ideal analysis and visualization.")
 
-
 # --- Propaganda Office Analytics ---
-
 # 1. Find all Propaganda Office agents and the clusters they occupy
 prop_offices = [a for a in agent_population if a["strategy"] == "PropagandaOffice"]
 office_clusters = set(a["cluster"] for a in prop_offices)
@@ -1104,7 +1180,6 @@ else:
     print(f"Mean Karma-Perception Delta (No Office): {without_office['Karma-Perception Delta'].mean():.2f}" if not without_office['Karma-Perception Delta'].empty else "N/A")
     print(f"Mean Score (Propaganda Office): {with_office['Score'].mean():.2f}" if not with_office['Score'].empty else "N/A")
     print(f"Mean Score (No Office): {without_office['Score'].mean():.2f}" if not without_office['Score'].empty else "N/A")
-
 
     # 4. Optionally, visualize cluster means by office status
     import matplotlib.pyplot as plt
