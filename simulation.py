@@ -765,6 +765,10 @@ for epoch in range(max_epochs):
                 # Optionally, set a cluster-level field for propaganda activity
                 print(f"🗞️ Cluster {cluster_id_for_new_office}: Propaganda Office established (agent {office_candidate['id']}) at epoch {epoch}.")
 
+        agent_id_counter += 1
+        agent_population[idx] = new_agent
+        network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
+        
         # --- Martyr/Founder/Trauma Event Logic (injects founding ideal on death of highly influential agent or betrayal) ---
         # This logic runs on the death of an agent.
         # We need to ensure the cluster still exists and has members *after* the replacement happens
