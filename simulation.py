@@ -314,19 +314,25 @@ def belief_interact(a, b, rounds=5):
             # Update Accountant's shown score to reflect sum of laundered values
             b["score"] = sum(b["laundered_score"].values())
 
+        if b["strategy"] == "Accountant" and act_a == "cooperate":
+            if a["id"] not in b["laundered_score"]:
+                b["laundered_score"][a["id"]] = 0
+            b["laundered_score"][a["id"]] += 2
+            b["score"] = sum(b["laundered_score"].values())
+
         if a["strategy"] == "Accountant" and act_b == "cooperate":
             if b["id"] not in a["laundered_score"]:
                 a["laundered_score"][b["id"]] = 0
             a["laundered_score"][b["id"]] += 2
             a["score"] = sum(a["laundered_score"].values())
         
-            if b.get("cluster", -1) != -1:
-                cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == b["cluster"]]
-                true_cluster_score = sum(ag["score"] for ag in cluster_agents) / len(cluster_agents)
-                # Store this in a["perceived_cluster_score"], with fast decay unless chosen again
-                if not hasattr(a, "perceived_cluster_score"):
-                    a.perceived_cluster_score = {}
-                a.perceived_cluster_score[b["cluster"]] = {"score": true_cluster_score, "decay": 1.0}
+        if b.get("cluster", -1) != -1:
+            cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == b["cluster"]]
+            true_cluster_score = sum(ag["score"] for ag in cluster_agents) / len(cluster_agents)
+            # Store this in a["perceived_cluster_score"], with fast decay unless chosen again
+            if not hasattr(a, "perceived_cluster_score"):
+                a.perceived_cluster_score = {}
+            a.perceived_cluster_score[b["cluster"]] = {"score": true_cluster_score, "decay": 1.0}
 
         # Decay these at the end of each epoch (faster than normal memory)
         for a in agent_population:
@@ -800,6 +806,11 @@ for epoch in range(max_epochs):
                 if a.shadow_peeks[cid]["decay"] < 0.05:  # Drop if almost faded
                     del a.shadow_peeks[cid]
 
+    if 'total_laundered_history' not in globals():
+        total_laundered_history = []
+    total_laundered = sum(sum(acc.get("laundered_score", {}).values()) for acc in agent_population if acc.get("strategy") == "Accountant")
+    total_laundered_history.append(total_laundered)
+    
     # --- TIME-SERIES LOGGING: append to logs at END of each epoch (NEW) ---
     mean_true_karma_ts.append(np.mean([a["karma"] for a in agent_population]))
     mean_perceived_karma_ts.append(np.mean([
@@ -1260,3 +1271,68 @@ else:
         plt.show()
     else:
         print("Not enough data to plot Propaganda Office Effect on Cluster Reputation.")
+
+    print("\n--- Accountant Laundering Report ---")
+    for a in agent_population:
+        if a.get("strategy") == "Accountant":
+            print(f"Accountant {a['id']} | Shown Score: {a['score']}")
+            total_laundered = sum(a.get("laundered_score", {}).values())
+            print(f"    Total Laundered: {total_laundered}")
+            print("    Laundered For:")
+            for client_id, amt in a.get("laundered_score", {}).items():
+                print(f"        Agent {client_id}: {amt}")
+
+    print("\n--- Agent Laundering Received ---")
+    agent_laundered_received = {a["id"]: 0 for a in agent_population}
+    for acc in agent_population:
+        if acc.get("strategy") == "Accountant":
+            for client_id, amt in acc.get("laundered_score", {}).items():
+                agent_laundered_received[client_id] += amt
+    for a in agent_population:
+        if agent_laundered_received[a["id"]] > 0:
+            print(f"Agent {a['id']} received laundered score: {agent_laundered_received[a['id']]}")
+
+    print("\n--- Accountant/ShadowBroker Exposure Map ---")
+    for agent in agent_population:
+        if agent.get("strategy") == "Accountant":
+            can_see = [other["id"] for other in agent_population if other.get("strategy") == "Accountant" and other["id"] != agent["id"]]
+            print(f"Accountant {agent['id']} sees true score of: {can_see}")
+        if agent.get("strategy") == "ShadowBroker":
+            can_see = [other["id"] for other in agent_population if other.get("strategy") == "ShadowBroker" and other["id"] != agent["id"]]
+            print(f"ShadowBroker {agent['id']} sees true karma of: {can_see}")
+
+    print("\n--- Exposure Map ---")
+    for a in agent_population:
+        if a.get("strategy") == "Accountant":
+            print(f"Accountant {a['id']} sees true score only of Accountants: {[b['id'] for b in agent_population if b.get('strategy') == 'Accountant' and b['id'] != a['id']]}")
+        if a.get("strategy") == "ShadowBroker":
+            print(f"ShadowBroker {a['id']} sees true karma only of ShadowBrokers: {[b['id'] for b in agent_population if b.get('strategy') == 'ShadowBroker' and b['id'] != a['id']]}")
+    
+    import pandas as pd
+
+    # Build laundering matrix (rows = Accountant, cols = Agent)
+    acc_ids = [a["id"] for a in agent_population if a.get("strategy") == "Accountant"]
+    agent_ids = [a["id"] for a in agent_population]
+    launder_matrix = pd.DataFrame(0, index=acc_ids, columns=agent_ids)
+    for acc in agent_population:
+        if acc.get("strategy") == "Accountant":
+            for client_id, amt in acc.get("laundered_score", {}).items():
+                launder_matrix.loc[acc["id"], client_id] = amt
+
+    print("\n--- Accountant Laundering Matrix (rows=Accountant, cols=Agent) ---")
+    print(launder_matrix)
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.plot(total_laundered_history)
+    plt.xlabel("Epoch")
+    plt.ylabel("Total Laundered Score")
+    plt.title("Laundered Score Over Time")
+    plt.show()
+
+
+
+
+
+
+
+
