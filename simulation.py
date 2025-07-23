@@ -137,9 +137,9 @@ def founding_descendant_strategy(agent, partner, last_self=None, last_partner=No
     return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
 
 def accountant_strategy(agent, partner, last_self=None, last_partner=None):
-    # Behaves like random or utilitarian, or pick your preferred logic
-    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
+    return factionalist_strategy(agent, partner, last_self, last_partner)
 
+strategy_functions["Accountant"] = accountant_strategy
 # --- Strategy map for selection ---
 strategy_functions = {
     "MoQ": moq_strategy,
@@ -242,6 +242,8 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
         "cluster": None,
         "generation": birth_epoch // 120
     }
+    if strategy == "Accountant":
+    agent["laundered_score"] = {}  # Maps other agent IDs to amount laundered for them
 
 # -- Initialize agents --
 agent_population = []
@@ -303,12 +305,21 @@ def belief_interact(a, b, rounds=5):
             b["score"] -= 1
             b["apology_available"] = False
             act_b = "cooperate"
-
-        # If agent cooperates with an Accountant, they get truer information on Accountant's score and cluster
+            
+        # Accountant laundering logic: when another agent cooperates with an Accountant, Accountant launders score for that agent
         if b["strategy"] == "Accountant" and act_a == "cooperate":
-            # a is the cooperator
-            # a gets to see b's true score, and Accountant's cluster's score (if Accountant is in a cluster)
-            a["perceived_score"][b["id"]] = b["score"]
+            if a["id"] not in b["laundered_score"]:
+                b["laundered_score"][a["id"]] = 0
+            b["laundered_score"][a["id"]] += 2  # Launder 2 score per cooperation, or choose your rule
+            # Update Accountant's shown score to reflect sum of laundered values
+            b["score"] = sum(b["laundered_score"].values())
+
+        if a["strategy"] == "Accountant" and act_b == "cooperate":
+            if b["id"] not in a["laundered_score"]:
+                a["laundered_score"][b["id"]] = 0
+            a["laundered_score"][b["id"]] += 2
+            a["score"] = sum(a["laundered_score"].values())
+        
             if b.get("cluster", -1) != -1:
                 cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == b["cluster"]]
                 true_cluster_score = sum(ag["score"] for ag in cluster_agents) / len(cluster_agents)
