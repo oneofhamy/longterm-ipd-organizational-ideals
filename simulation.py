@@ -513,7 +513,7 @@ if not hasattr(network, "cluster_propaganda"):
     network.cluster_propaganda = {}
 
 # ---- Main simulation loop ----
-max_epochs = 15000
+max_epochs = 18000
 generation_length = 120
 
 for epoch in range(max_epochs):
