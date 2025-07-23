@@ -106,13 +106,13 @@ def saboteur_strategy(agent, partner, last_self=None, last_partner=None):
 
 def conformist_strategy(agent, partner, last_self=None, last_partner=None):
     # Should copy most common action in neighborhood (stub: acts random here, for simplicity)
-    return random_strategy(agent, partner, last_self, last_partner)
+    return factionalist_strategy(agent, partner, last_self, last_partner)
 
 def shadow_broker_strategy(agent, partner, last_self=None, last_partner=None):
     # Sometimes randomizes or masks its own karma perception
     if random.random() < 0.2:
         agent['broadcasted_karma'] = random.randint(-10, 10)
-    return random_strategy(agent, partner, last_self, last_partner)
+    return factionalist_strategy(agent, partner, last_self, last_partner)
 
 # Helper function to check if an agent is a founder or descendant
 # Define the window for being considered a descendant globally for simplicity in this function
