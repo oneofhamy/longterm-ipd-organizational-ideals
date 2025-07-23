@@ -347,7 +347,7 @@ def belief_interact(a, b, rounds=5):
             # ShadowBroker builds up knowledge of that cluster's karma difference
             if "cluster_karma_visibility" not in broker:
                 broker["cluster_karma_visibility"] = {}
-            vis = broker["cluster_karma_visibility"]get(cluster_id, 0.0)
+            vis = broker["cluster_karma_visibility"].get(cluster_id, 0.0)
             broker["cluster_karma_visibility"][cluster_id] = vis
 
             # Save the latest karma difference for this cluster for the broker
@@ -391,7 +391,7 @@ def belief_interact(a, b, rounds=5):
             visible_clusters = [cid for cid, vis in broker["cluster_karma_visibility"].items() if cid != cluster_id and vis > 0]
             if visible_clusters:
                 peek_cluster = random.choice(visible_clusters)
-                peek_delta = broker["cluster_karma_delta"]get(peek_cluster, 0)
+                peek_delta = broker["cluster_karma_delta"].get(peek_cluster, 0)
                 # Agent stores peeked value in a special dict
                 if "shadow_peeks" not in a:
                     a["shadow_peeks"] = {}
