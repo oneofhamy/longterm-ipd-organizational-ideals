@@ -133,23 +133,9 @@ def is_founder_or_descendant(agent_id, cluster_id, birth_epoch, network):
             return True
     return False
 
-
 def founding_descendant_strategy(agent, partner, last_self=None, last_partner=None):
-    # Check if the partner is in the same cluster
-    if agent.get("cluster", -1) != partner.get("cluster", -1) or agent.get("cluster", -1) == -1:
-        # If not in the same cluster, or not in a valid cluster, act randomly
-        return random_strategy(agent, partner, last_self, last_partner)
-
-    # Check if the partner is a founder or descendant within the agent's cluster
-    is_partner_founder_or_descendant = is_founder_or_descendant(
-        partner["id"],
-        agent["cluster"], # Check partner's status within agent's cluster context
-        partner["birth_epoch"],
-        network # Pass network to access founding_ideals
-    )
-
-    # Cooperate if the partner is a founder or descendant in the same cluster, otherwise defect
-    return "cooperate" if is_partner_founder_or_descendant else "defect"
+    # Behave identically to cluster_utilitarian_strategy
+    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
 
 # --- Strategy map for selection ---
 strategy_functions = {
@@ -166,7 +152,9 @@ strategy_functions = {
     "Random": random_strategy,
     "GrimTrigger": grim_trigger_strategy,
     "ClusterUtilitarian": cluster_utilitarian_strategy,
-    "GlobalUtilitarian": global_utilitarian_strategy,
+    "GlobalUtilitdef founding_descendant_strategy(agent, partner, last_self=None, last_partner=None):
+    # Behave identically to cluster_utilitarian_strategy
+    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)arian": global_utilitarian_strategy,
     "Factionalist": factionalist_strategy,
     "Saboteur": saboteur_strategy,
     "Conformist": conformist_strategy,
@@ -219,7 +207,7 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
     if not strategy:
         # Initial agents use the weighted distribution
         strategy = random.choice(strategy_choices_weighted)
-    lifespan = min(max(int(np.random.normal(90, 15)), 60), 120)
+    lifespan = min(max(int(np.random.normal(120, 15)), 90), 150)
     return {
         "id": agent_id,
         "tag": tag,
@@ -552,36 +540,78 @@ for epoch in range(max_epochs):
 
         # FoundingDescendant Spawning Logic (NEW/MODIFIED)
         # Only spawn FoundingDescendant if not a Propaganda Office respawn and in a valid cluster
-        if cluster_id != -1: # Only in valid clusters
-            # Calculate probability based on cluster score (higher score = lower probability)
-            cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-            cluster_score = np.mean([a["score"] for a in cluster_agents]) if cluster_agents else 0
-            all_scores = [a["score"] for a in agent_population]
-            max_score = max(all_scores) if all_scores else 1e-6 # Avoid division by zero
-
-            # Probability decreases as cluster score increases
-            # Example: 10% chance at low scores, decreasing towards 0-2.5% at high scores
-            base_prob = 0.10
-            score_reduction_factor = 0.075 # Reduces probability by up to 7.5%
-            prob_founding_descendant = max(0.025, base_prob - (cluster_score / max_score) * score_reduction_factor)
-
-            if random.random() < prob_founding_descendant:
-                new_agent["strategy"] = "FoundingDescendant"
-                print(f"🧬 Agent {new_agent['id']} spawned as FoundingDescendant in Cluster {cluster_id} at epoch {epoch}.")
+        if cluster_id != -1:
+            # Get all cluster scores and rank them
+            cluster_scores = {}
+            for cid in set(cluster_map.values()):
+                if cid != -1:
+                    agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cid]
+                    if agents:
+                        cluster_scores[cid] = np.mean([a["score"] for a in agents])
+            sorted_clusters = sorted(cluster_scores, key=lambda c: cluster_scores[c], reverse=True)
+            n = len(sorted_clusters)
+            if n == 0:
+                descendant_prob = 0.0
             else:
-                 # If not FoundingDescendant or Propaganda Office, revert to the original 1/3 chance of random strategy mutation
-                 # Ensure the original mutation logic is also not applied to Propaganda Offices
-                 if new_agent["strategy"] != "PropagandaOffice" and random.random() < 1/3:
-                      # Exclude FoundingDescendant and PropagandaOffice from random mutation pool
-                      available_mutation_strategies = [s for s in strategy_choices_weighted if s not in ["FoundingDescendant", "PropagandaOffice"]]
-                      if available_mutation_strategies:
-                           new_agent["strategy"] = random.choice(available_mutation_strategies)
+                top_cut = n // 3
+                mid_cut = 2 * n // 3
 
+                if cluster_id in sorted_clusters[:top_cut]:
+                    # TOP 1/3: maintain >= 10% descendants at all times
+                    cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+                    descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
+                    descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
+
+                    if descendant_ratio < 0.10:
+                        new_agent["strategy"] = "FoundingDescendant"
+                        new_agent["is_descendant"] = True
+                        print(f"🧬 Top cluster {cluster_id}: Enforcing descendant quota. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+                    # else: No forced promotion; child inherits normally or as rebel (handled elsewhere)
+                elif cluster_id in sorted_clusters[top_cut:mid_cut]:
+                    # MIDDLE 1/3: 5% chance to spawn descendant
+                    if random.random() < 0.05:
+                        new_agent["strategy"] = "FoundingDescendant"
+                        new_agent["is_descendant"] = True
+                        print(f"🧬 Middle cluster {cluster_id}: 5% chance descendant promotion. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+                # Else: bottom 1/3 never gets new descendants (do nothing)
 
         # --- Check for NEW Propaganda Office Creation (if the dead agent wasn't an office) ---
         # This logic is for creating *new* offices in clusters that don't have one.
         # It should ideally consider the replaced agent's cluster.
-        # Let's keep it associated with the *dead* agent's cluster for now.
+        # Let's keep it associated with the *dead* agenif cluster_id != -1:
+    # Get all cluster scores and rank them
+    cluster_scores = {}
+    for cid in set(cluster_map.values()):
+        if cid != -1:
+            agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cid]
+            if agents:
+                cluster_scores[cid] = np.mean([a["score"] for a in agents])
+    sorted_clusters = sorted(cluster_scores, key=lambda c: cluster_scores[c], reverse=True)
+    n = len(sorted_clusters)
+    if n == 0:
+        descendant_prob = 0.0
+    else:
+        top_cut = n // 3
+        mid_cut = 2 * n // 3
+
+        if cluster_id in sorted_clusters[:top_cut]:
+            # TOP 1/3: maintain >= 10% descendants at all times
+            cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
+            descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
+            descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
+
+            if descendant_ratio < 0.10:
+                new_agent["strategy"] = "FoundingDescendant"
+                new_agent["is_descendant"] = True
+                print(f"🧬 Top cluster {cluster_id}: Enforcing descendant quota. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+            # else: No forced promotion; child inherits normally or as rebel (handled elsewhere)
+        elif cluster_id in sorted_clusters[top_cut:mid_cut]:
+            # MIDDLE 1/3: 5% chance to spawn descendant
+            if random.random() < 0.05:
+                new_agent["strategy"] = "FoundingDescendant"
+                new_agent["is_descendant"] = True
+                print(f"🧬 Middle cluster {cluster_id}: 5% chance descendant promotion. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
+        # Else: bottom 1/3 never gets new descendants (do nothing)t's cluster for now.
         if not is_propaganda_office:
             cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
             # Need to check the *current* state of the cluster *after* replacement for size and existing office
