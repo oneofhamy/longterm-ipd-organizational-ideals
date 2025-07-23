@@ -178,24 +178,24 @@ strategy_functions = {
 # --- Agent initialization weights (updated) ---
 init_agents = 200
 strategy_population = {
-    "MoQ": 8,
-    "GMoQ": 4,
-    "HGMoQ": 2,
-    "TFT": 15,
-    "GTFT": 10,
-    "HGTFT": 5,
-    "ALLC": 4,
-    "ALLD": 10,
-    "WSLS": 15,
-    "Ethnocentric": 24,
-    "Random": 10,
-    "GrimTrigger": 6,
-    "ClusterUtilitarian": 7,
-    "GlobalUtilitarian": 2,
-    "Factionalist": 24,
-    "Saboteur": 2,
-    "Conformist": 50,
-    "ShadowBroker": 2,
+    "MoQ": 4,
+    "GMoQ": 2,
+    "HGMoQ": 1,
+    "TFT": 7,
+    "GTFT": 5,
+    "HGTFT": 2,
+    "ALLC": 2,
+    "ALLD": 5,
+    "WSLS": 8,
+    "Ethnocentric": 12,
+    "Random": 5,
+    "GrimTrigger": 3,
+    "ClusterUtilitarian": 4,
+    "GlobalUtilitarian": 1,
+    "Factionalist": 12,
+    "Saboteur": 1,
+    "Conformist": 25,
+    "ShadowBroker": 1,
     # PropagandaOffice and FoundingDescendant are only created by event, never initial
 }
 # Weighted list for random sampling
@@ -537,8 +537,15 @@ for epoch in range(max_epochs):
                 print(f"✨ Propaganda Office agent {dead['id']} respawned in Cluster {cluster_id} as agent {new_agent['id']} at epoch {epoch}.")
                 continue # Skip the default agent replacement logic
 
-        # Default agent replacement (if not a Propaganda Office respawn)
-        new_agent = make_agent(agent_id_counter, parent=dead, birth_epoch=epoch)
+        # 1/3 chance that child rebels and does NOT inherit parent's strategy/trait
+        if random.random() < 1/3:
+            # Assign random allowed strategy (excluding special strategies)
+            allowed_strats = [s for s in strategy_functions.keys() if s not in ["FoundingDescendant", "PropagandaOffice"]]
+            child_strategy = random.choice(allowed_strats)
+             new_agent = make_agent(agent_id_counter, strategy=child_strategy, birth_epoch=epoch)
+        else:
+            # Default: inherit parent trait/strategy
+            new_agent = make_agent(agent_id_counter, parent=dead, birth_epoch=epoch)
         agent_id_counter += 1
         agent_population[idx] = new_agent
         network.add_node(new_agent["id"], tag=new_agent["tag"], strategy=new_agent["strategy"])
