@@ -734,14 +734,14 @@ for epoch in range(max_epochs):
     #   # Else: bottom 1/3 never gets new descendants (do nothing)t's cluster for now.
 
             if not is_propaganda_office:
-            cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
-            # Need to check the *current* state of the cluster *after* replacement for size and existing office
-            cluster_agents_for_new_office = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id_for_new_office]
-            num_clusters = len(set(cluster_map.values()))
-            max_offices = max(1, num_clusters // 4)
-            existing_offices = sum(1 for a in agent_population if a["strategy"] == "PropagandaOffice")
-            # Check if the cluster *already* has a propaganda office (either newly spawned or existing)
-            has_office = any(a["strategy"] == "PropagandaOffice" and a.get("cluster", -1) == cluster_id_for_new_office for a in agent_population)
+                cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
+                # Need to check the *current* state of the cluster *after* replacement for size and existing office
+                cluster_agents_for_new_office = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id_for_new_office]
+                num_clusters = len(set(cluster_map.values()))
+                max_offices = max(1, num_clusters // 4)
+                existing_offices = sum(1 for a in agent_population if a["strategy"] == "PropagandaOffice")
+                # Check if the cluster *already* has a propaganda office (either newly spawned or existing)
+                has_office = any(a["strategy"] == "PropagandaOffice" and a.get("cluster", -1) == cluster_id_for_new_office for a in agent_population)
 
             if (
                 cluster_id_for_new_office != -1
