@@ -161,7 +161,7 @@ strategy_functions = {
     "ShadowBroker": shadow_broker_strategy,
     "FoundingDescendant": founding_descendant_strategy,
     "PropagandaOffice": propaganda_office_strategy,
-    "Accountant": accountant_strategy,
+    "accountant": accountant_strategy,
 }
 
 # --- Agent initialization weights (updated) ---
