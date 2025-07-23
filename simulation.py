@@ -345,11 +345,10 @@ def belief_interact(a, b, rounds=5):
         if a["strategy"] == "ShadowBroker" and act_b == "cooperate" and b.get("cluster", -1) is not None:
             cluster_id = b["cluster"]
             # ShadowBroker builds up knowledge of that cluster's karma difference
-            if not hasattr(a, "cluster_karma_visibility"):
-                a.cluster_karma_visibility = {}  # {cluster_id: percent_known (0-1)}
-            vis = a.cluster_karma_visibility.get(cluster_id, 0.0)
-            vis = min(vis + 0.2, 1.0)  # +20% per cooperation, capped at 100%
-            a.cluster_karma_visibility[cluster_id] = vis
+            if "cluster_karma_visibility" not in broker:
+                broker["cluster_karma_visibility"] = {}
+            vis = broker["cluster_karma_visibility"].get(cluster_id, 0.0)
+            broker["cluster_karma_visibility"][cluster_id] = vis
 
             # Save the latest karma difference for this cluster for the broker
             cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == cluster_id]
@@ -369,8 +368,8 @@ def belief_interact(a, b, rounds=5):
             cluster_id = a["cluster"]
 
             # Build up visibility for the broker
-            if not hasattr(broker, "cluster_karma_visibility"):
-                broker.cluster_karma_visibility = {}
+            if "cluster_karma_visibility" not in broker:
+                broker["cluster_karma_visibility"] = {}  
             vis = broker.cluster_karma_visibility.get(cluster_id, 0.0)
             vis = min(vis + 0.2, 1.0)
             broker.cluster_karma_visibility[cluster_id] = vis
