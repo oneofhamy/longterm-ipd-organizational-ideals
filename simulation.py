@@ -388,10 +388,10 @@ def belief_interact(a, b, rounds=5):
                 broker["cluster_karma_delta"][cluster_id] = karma_delta
 
             # Choose a random cluster (that isn't the cooperating agent's cluster) from those broker has visibility into
-            visible_clusters = [cid for cid, vis in broker.cluster_karma_visibility.items() if cid != cluster_id and vis > 0]
+            visible_clusters = [cid for cid, vis in broker["cluster_karma_visibility"].items() if cid != cluster_id and vis > 0]
             if visible_clusters:
                 peek_cluster = random.choice(visible_clusters)
-                peek_delta = broker.cluster_karma_delta.get(peek_cluster, 0)
+                peek_delta = broker["cluster_karma_delta"]get(peek_cluster, 0)
                 # Agent stores peeked value in a special dict
                 if "shadow_peeks" not in a:
                     a["shadow_peeks"] = {}
