@@ -136,6 +136,10 @@ def founding_descendant_strategy(agent, partner, last_self=None, last_partner=No
     # Behave identically to cluster_utilitarian_strategy
     return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
 
+def accountant_strategy(agent, partner, last_self=None, last_partner=None):
+    # Behaves like random or utilitarian, or pick your preferred logic
+    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)
+
 # --- Strategy map for selection ---
 strategy_functions = {
     "MoQ": moq_strategy,
@@ -151,15 +155,14 @@ strategy_functions = {
     "Random": random_strategy,
     "GrimTrigger": grim_trigger_strategy,
     "ClusterUtilitarian": cluster_utilitarian_strategy,
-    "GlobalUtilitdef founding_descendant_strategy(agent, partner, last_self=None, last_partner=None):
-    # Behave identically to cluster_utilitarian_strategy
-    return cluster_utilitarian_strategy(agent, partner, last_self, last_partner)arian": global_utilitarian_strategy,
+    "GlobalUtilitarian": global_utilitarian_strategy,
     "Factionalist": factionalist_strategy,
     "Saboteur": saboteur_strategy,
     "Conformist": conformist_strategy,
     "ShadowBroker": shadow_broker_strategy,
     "FoundingDescendant": founding_descendant_strategy,
     "PropagandaOffice": propaganda_office_strategy,
+    "Accountant": accountant_strategy,
 }
 
 # --- Agent initialization weights (updated) ---
@@ -175,15 +178,16 @@ strategy_population = {
     "ALLD": 5,                    # 5%
     "WSLS": 8,                    # 8%
     "Ethnocentric": 12,           # 12%
-    "Random": 5,                  # 5%
+    "Random": 4,                  # 4%
     "GrimTrigger": 3,             # 3%
     "ClusterUtilitarian": 4,      # 4%
     "GlobalUtilitarian": 1,       # 1%
     "Factionalist": 12,           # 12%
     "Saboteur": 1,                # 1%
-    "Conformist": 25,             # 25%
+    "Conformist": 24,             # 24%
     "ShadowBroker": 1,            # 1%
-    # PropagandaOffice and FoundingDescendant are only created by event, never initial
+    "accountant": 2,              # 2%
+    # PropagandaOffice and FoundingDescendant are only created by event, never initial weight
 }
 # Weighted list for random sampling
 strategy_choices_weighted = []
@@ -299,6 +303,27 @@ def belief_interact(a, b, rounds=5):
             b["score"] -= 1
             b["apology_available"] = False
             act_b = "cooperate"
+
+        # If agent cooperates with an Accountant, they get truer information on Accountant's score and cluster
+        if b["strategy"] == "Accountant" and act_a == "cooperate":
+            # a is the cooperator
+            # a gets to see b's true score, and Accountant's cluster's score (if Accountant is in a cluster)
+            a["perceived_score"][b["id"]] = b["score"]
+            if b.get("cluster", -1) != -1:
+                cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == b["cluster"]]
+                true_cluster_score = sum(ag["score"] for ag in cluster_agents) / len(cluster_agents)
+                # Store this in a["perceived_cluster_score"], with fast decay unless chosen again
+                if not hasattr(a, "perceived_cluster_score"):
+                    a.perceived_cluster_score = {}
+                a.perceived_cluster_score[b["cluster"]] = {"score": true_cluster_score, "decay": 1.0}
+
+        # Decay these at the end of each epoch (faster than normal memory)
+        for a in agent_population:
+            if hasattr(a, "perceived_cluster_score"):
+                for cid in list(a.perceived_cluster_score.keys()):
+                    a.perceived_cluster_score[cid]["decay"] *= 0.85  # 3x faster
+                    if a.perceived_cluster_score[cid]["decay"] < 0.05:
+                        del a.perceived_cluster_score[cid]
 
         # Define how "visibility" increases: e.g. add +20% per successful cooperation up to 100% clarity
         if a["strategy"] == "ShadowBroker" and act_b == "cooperate" and b.get("cluster", -1) is not None:
@@ -497,7 +522,6 @@ for epoch in range(max_epochs):
             cluster_members = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
             if cluster_members:
                 cluster_scores[cluster_id] = np.mean([a["score"] for a in cluster_members])
-
 
     # --- Initialize Founding Ideals for All Clusters at Epoch 0 (NEW) ---
     # This ensures all clusters present at epoch 0 have a founding ideal recorded.
@@ -777,6 +801,20 @@ for epoch in range(max_epochs):
         # Ensure there are agents for the strategy before calculating mean
         mean_strat_karma = np.mean([a["karma"] for a in strat_agents]) if strat_agents else np.nan
         strategy_karma_ts[strat].append(mean_strat_karma)
+
+    for agent in agent_population:
+        for other_agent in agent_population:
+            if other_agent["id"] == agent["id"]:
+                continue
+            # Memory decay, then update based on Accountant status
+            prev = agent["perceived_score"].get(other_agent["id"], 0) * 0.95
+            if other_agent["strategy"] == "Accountant":
+                if agent["strategy"] == "Accountant":
+                    agent["perceived_score"][other_agent["id"]] = other_agent["score"]
+                else:
+                    agent["perceived_score"][other_agent["id"]] = 0
+            else:
+                agent["perceived_score"][other_agent["id"]] = other_agent["score"] * 0.95 + prev * 0.05
 
 # === POST-SIMULATION ANALYTICS ===
 ostracism_threshold = 3
