@@ -359,20 +359,20 @@ def belief_interact(a, b, rounds=5):
                     for ag in cluster_agents
                 ])
                 karma_delta = real_karma - perceived_karma
-                if not hasattr(a, "cluster_karma_delta"):
-                    a.cluster_karma_delta = {}
-                a.cluster_karma_delta[cluster_id] = karma_delta
+                if "cluster_karma_delta" not in a:
+                    a["cluster_karma_delta"] = {}
+                a["cluster_karma_delta"][cluster_id] = karma_delta
 
         if b["strategy"] == "ShadowBroker" and act_a == "cooperate" and a.get("cluster", -1) is not None:
             broker = b
             cluster_id = a["cluster"]
 
-            # Build up visibility for the broker
             if "cluster_karma_visibility" not in broker:
-                broker["cluster_karma_visibility"] = {}  
-            vis = broker.cluster_karma_visibility.get(cluster_id, 0.0)
+                broker["cluster_karma_visibility"] = {}
+
+            vis = broker["cluster_karma_visibility"].get(cluster_id, 0.0)
             vis = min(vis + 0.2, 1.0)
-            broker.cluster_karma_visibility[cluster_id] = vis
+            broker["cluster_karma_visibility"][cluster_id] = vis
 
             # Save latest karma difference for the broker
             cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == cluster_id]
@@ -383,9 +383,9 @@ def belief_interact(a, b, rounds=5):
                     for ag in cluster_agents
                 ])
                 karma_delta = real_karma - perceived_karma
-                if not hasattr(broker, "cluster_karma_delta"):
-                    broker.cluster_karma_delta = {}
-                broker.cluster_karma_delta[cluster_id] = karma_delta
+                if "cluster_karma_delta" not in broker:
+                    broker["cluster_karma_delta"] = {}
+                broker["cluster_karma_delta"][cluster_id] = karma_delta
 
             # Choose a random cluster (that isn't the cooperating agent's cluster) from those broker has visibility into
             visible_clusters = [cid for cid, vis in broker.cluster_karma_visibility.items() if cid != cluster_id and vis > 0]
@@ -393,9 +393,9 @@ def belief_interact(a, b, rounds=5):
                 peek_cluster = random.choice(visible_clusters)
                 peek_delta = broker.cluster_karma_delta.get(peek_cluster, 0)
                 # Agent stores peeked value in a special dict
-                if not hasattr(a, "shadow_peeks"):
-                    a.shadow_peeks = {}
-                a.shadow_peeks[peek_cluster] = {
+                if "shadow_peeks" not in a:
+                    a["shadow_peeks"] = {}
+                a["shadow_peeks"][peek_cluster] = {
                     "value": peek_delta,
                     "decay": 1.0  # Start at full, decay 3x as fast as memory
                 }
@@ -798,8 +798,8 @@ for epoch in range(max_epochs):
 
     # Shadow broker peeks decay 3x as fast as normal memory decay
     for a in agent_population:
-        if hasattr(a, "shadow_peeks"):
-            for cid in list(a.shadow_peeks.keys()):
+        if "shadow_peeks" in agent:
+            for cid in list(agent["shadow_peeks"].keys()):
                 a.shadow_peeks[cid]["decay"] *= 0.85
                 if a.shadow_peeks[cid]["decay"] < 0.05:  # Drop if almost faded
                     del a.shadow_peeks[cid]
