@@ -210,12 +210,13 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
         # Initial agents use the weighted distribution
         strategy = random.choice(strategy_choices_weighted)
     lifespan = min(max(int(np.random.normal(120, 15)), 90), 150)
-    return {
+    agent = {
         "id": agent_id,
         "tag": tag,
         "strategy": strategy,
         "karma": 0,
         "perceived_karma": defaultdict(lambda: 0),
+        "perceived_score": defaultdict(lambda: 0),
         "score": 0,
         "trust": defaultdict(int),
         "history": [],
@@ -243,6 +244,8 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
     }
     if strategy == "Accountant":
         agent["laundered_score"] = {}  # Maps other agent IDs to amount laundered for them
+    
+    return agent
 
 # -- Initialize agents --
 agent_population = []
@@ -345,10 +348,10 @@ def belief_interact(a, b, rounds=5):
         if a["strategy"] == "ShadowBroker" and act_b == "cooperate" and b.get("cluster", -1) is not None:
             cluster_id = b["cluster"]
             # ShadowBroker builds up knowledge of that cluster's karma difference
-            if "cluster_karma_visibility" not in broker:
-                broker["cluster_karma_visibility"] = {}
-            vis = broker["cluster_karma_visibility"].get(cluster_id, 0.0)
-            broker["cluster_karma_visibility"][cluster_id] = vis
+            if "cluster_karma_visibility" not in a:
+                a["cluster_karma_visibility"] = {}
+            vis = a["cluster_karma_visibility"].get(cluster_id, 0.0)
+            a["cluster_karma_visibility"][cluster_id] = vis
 
             # Save the latest karma difference for this cluster for the broker
             cluster_agents = [ag for ag in agent_population if ag.get("cluster", -1) == cluster_id]
@@ -701,40 +704,7 @@ for epoch in range(max_epochs):
         # --- Check for NEW Propaganda Office Creation (if the dead agent wasn't an office) ---
         # This logic is for creating *new* offices in clusters that don't have one.
         # It should ideally consider the replaced agent's cluster.
-        # Let's keep it associated with the *dead* agenif cluster_id != -1:
-    # Get all cluster scores and rank them
-    cluster_scores = {}
-    for cid in set(cluster_map.values()):
-        if cid != -1:
-            agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cid]
-            if agents:
-                cluster_scores[cid] = np.mean([a["score"] for a in agents])
-    sorted_clusters = sorted(cluster_scores, key=lambda c: cluster_scores[c], reverse=True)
-    n = len(sorted_clusters)
-    if n == 0:
-        descendant_prob = 0.0
-    else:
-        top_cut = n // 3
-        mid_cut = 2 * n // 3
-
-    #   if cluster_id in sorted_clusters[:top_cut]:
-    #       # TOP 1/3: maintain >= 10% descendants at all times
-    #       cluster_agents = [a for a in agent_population if cluster_map.get(a["id"], -1) == cluster_id]
-    #       descendant_agents = [a for a in cluster_agents if a.get("strategy") == "FoundingDescendant"]
-    #       descendant_ratio = len(descendant_agents) / len(cluster_agents) if cluster_agents else 0
-
-    #       if descendant_ratio < 0.10:
-    #           new_agent["strategy"] = "FoundingDescendant"
-    #           new_agent["is_descendant"] = True
-    #           print(f" Top cluster {cluster_id}: Enforcing descendant quota. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
-    #       # else: No forced promotion; child inherits normally or as rebel (handled elsewhere)
-    #   elif cluster_id in sorted_clusters[top_cut:mid_cut]:
-    #       # MIDDLE 1/3: 5% chance to spawn descendant
-    #       if random.random() < 0.05:
-    #           new_agent["strategy"] = "FoundingDescendant"
-    #           new_agent["is_descendant"] = True
-    #           print(f" Middle cluster {cluster_id}: 5% chance descendant promotion. Agent {new_agent['id']} is FoundingDescendant at epoch {epoch}.")
-    #   # Else: bottom 1/3 never gets new descendants (do nothing)t's cluster for now.
+        # Let's keep it associated with the *dead* agent's cluster for now.
 
         if not is_propaganda_office:
             cluster_id_for_new_office = cluster_map.get(dead["id"], -1)
@@ -806,11 +776,11 @@ for epoch in range(max_epochs):
 
     # Shadow broker peeks decay 3x as fast as normal memory decay
     for a in agent_population:
-        if "shadow_peeks" in agent:
-            for cid in list(agent["shadow_peeks"].keys()):
-                a.shadow_peeks[cid]["decay"] *= 0.85
-                if a.shadow_peeks[cid]["decay"] < 0.05:  # Drop if almost faded
-                    del a.shadow_peeks[cid]
+        if "shadow_peeks" in a:
+            for cid in list(a["shadow_peeks"].keys()):
+                a["shadow_peeks"][cid]["decay"] *= 0.85
+                if a["shadow_peeks"][cid]["decay"] < 0.05:  # Drop if almost faded
+                    del a["shadow_peeks"][cid]
 
     if 'total_laundered_history' not in globals():
         total_laundered_history = []
