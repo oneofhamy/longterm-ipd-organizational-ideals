@@ -240,7 +240,8 @@ def make_agent(agent_id, tag=None, strategy=None, parent=None, birth_epoch=0):
         "score_efficiency": 0,
         "trust_reciprocity": 0,
         "cluster": None,
-        "generation": birth_epoch // 120
+        "generation": birth_epoch // 120,
+        "influence": 0
     }
     if strategy == "Accountant":
         agent["laundered_score"] = {}  # Maps other agent IDs to amount laundered for them
@@ -514,7 +515,7 @@ if not hasattr(network, "cluster_propaganda"):
     network.cluster_propaganda = {}
 
 # ---- Main simulation loop ----
-max_epochs = 18000
+max_epochs = 1000
 generation_length = 120
 
 for epoch in range(max_epochs):
@@ -531,8 +532,7 @@ for epoch in range(max_epochs):
             a["cluster"] = None  # or -1, just be consistent everywhere!
         else:
             a["cluster"] = cluster_map.get(a["id"], -1)
-
-    a["influence"] = centrality.get(a["id"], 0)
+        a["influence"] = centrality.get(a["id"], 0)
     # Calculate mean cluster score at the beginning of each epoch
     cluster_scores = {}
     for cluster_id in set(cluster_map.values()):
@@ -870,8 +870,8 @@ df = pd.DataFrame([{
     "Generation": a["birth_epoch"] // generation_length
 } for a in agent_population]).sort_values(by="Score", ascending=False).reset_index(drop=True)
 
-import IPython
-IPython.display.display(df.head(20))
+from IPython.display import display
+display(df.head(20))
 
 # === ADDITIONAL POST-HOC ANALYTICS ===
 # 1. Karma Ratio (In-Group vs Out-Group Karma)
@@ -1190,7 +1190,7 @@ else:
             "Mean Delta": round(members["Karma-Perception Delta"].mean(), 2) if not members["Karma-Perception Delta"].empty else np.nan,
             "Mean Score": round(members["Score"].mean(), 2) if not members["Score"].empty else np.nan,
             "Total Influence": round(members["Influence Centrality"].sum(), 3) if not members["Influence Centrality"].empty else np.nan,
-            "Office Agent": next((a["ID"] for a in prop_offices if a["cluster"] == cluster_id), None) # Find the ID of the office agent in this cluster
+            "Office Agent": next((a["id"] for a in prop_offices if a["cluster"] == cluster_id), None) # Find the ID of the office agent in this cluster
         }
 
     print("\nClusters WITH Propaganda Office:\n")
