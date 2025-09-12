@@ -28,16 +28,10 @@ Most ABMs ignore long-term institutional memory, shadow influence, and generatio
 
 ## Example Plots
 
-*(Insert PNGs here)*
 
 ## License
 
 AGPL-3.0
-
-## Credit
-
-Simulation design by [Your Name or Handle].  
-Inspired by [your influences, e.g. Pirsig, sociological theory].
 
 ---
 
